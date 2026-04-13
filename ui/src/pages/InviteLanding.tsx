@@ -135,6 +135,7 @@ export function InviteLandingPage() {
   const [result, setResult] = useState<{ kind: "bootstrap" | "join"; payload: unknown } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authFeedback, setAuthFeedback] = useState<AuthFeedback | null>(null);
+  const [autoAcceptStarted, setAutoAcceptStarted] = useState(false);
 
   const healthQuery = useQuery({
     queryKey: queryKeys.health,
@@ -162,6 +163,10 @@ export function InviteLandingPage() {
 
   useEffect(() => {
     if (token) rememberPendingInviteToken(token);
+  }, [token]);
+
+  useEffect(() => {
+    setAutoAcceptStarted(false);
   }, [token]);
 
   useEffect(() => {
@@ -197,6 +202,14 @@ export function InviteLandingPage() {
     !sessionQuery.data &&
     invite?.allowedJoinTypes !== "agent";
   const showsAgentForm = invite?.inviteType !== "bootstrap_ceo" && invite?.allowedJoinTypes === "agent";
+  const shouldAutoAcceptHumanInvite =
+    Boolean(sessionQuery.data) &&
+    !showsAgentForm &&
+    invite?.inviteType !== "bootstrap_ceo" &&
+    !isCheckingExistingMembership &&
+    !isCurrentMember &&
+    !result &&
+    error === null;
   const sessionLabel =
     sessionQuery.data?.user.name?.trim() ||
     sessionQuery.data?.user.email?.trim() ||
@@ -229,15 +242,26 @@ export function InviteLandingPage() {
     onSuccess: async (payload) => {
       setError(null);
       clearPendingInviteToken(token);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       const asBootstrap = isBootstrapAcceptancePayload(payload);
       setResult({ kind: asBootstrap ? "bootstrap" : "join", payload });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      if (invite?.companyId && isApprovedHumanJoinPayload(payload, showsAgentForm)) {
+        setSelectedCompanyId(invite.companyId, { source: "manual" });
+        navigate("/", { replace: true });
+      }
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Failed to accept invite");
     },
   });
+
+  useEffect(() => {
+    if (!shouldAutoAcceptHumanInvite || autoAcceptStarted || acceptMutation.isPending) return;
+    setAutoAcceptStarted(true);
+    setError(null);
+    acceptMutation.mutate();
+  }, [acceptMutation, autoAcceptStarted, shouldAutoAcceptHumanInvite]);
 
   const authMutation = useMutation({
     mutationFn: async () => {
@@ -268,21 +292,17 @@ export function InviteLandingPage() {
         return;
       }
 
-      let payload: unknown;
+      if (!invite || invite.inviteType !== "bootstrap_ceo") {
+        return;
+      }
+
       try {
-        payload = await acceptMutation.mutateAsync();
+        const payload = await acceptMutation.mutateAsync();
+        if (isBootstrapAcceptancePayload(payload)) {
+          navigate("/", { replace: true });
+        }
       } catch {
         return;
-      }
-
-      if (invite?.companyId && isApprovedHumanJoinPayload(payload, showsAgentForm)) {
-        setSelectedCompanyId(invite.companyId, { source: "manual" });
-        navigate("/", { replace: true });
-        return;
-      }
-
-      if (isBootstrapAcceptancePayload(payload)) {
-        navigate("/", { replace: true });
       }
     },
     onError: (err) => {
@@ -664,10 +684,16 @@ export function InviteLandingPage() {
               <div className="space-y-4">
                 <div>
                   <h2 className="text-lg font-semibold">
-                    {invite.inviteType === "bootstrap_ceo" ? "Accept bootstrap invite" : "Accept company invite"}
+                    {shouldAutoAcceptHumanInvite
+                      ? "Submitting join request"
+                      : invite.inviteType === "bootstrap_ceo"
+                        ? "Accept bootstrap invite"
+                        : "Accept company invite"}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-400">
-                    {isCurrentMember
+                    {shouldAutoAcceptHumanInvite
+                      ? `Submitting your join request for ${companyDisplayName}.`
+                      : isCurrentMember
                       ? `This account already belongs to ${companyDisplayName}.`
                       : `This will ${
                           invite.inviteType === "bootstrap_ceo" ? "finish setting up Paperclip" : `submit or complete your join request for ${companyDisplayName}`
@@ -675,13 +701,19 @@ export function InviteLandingPage() {
                   </p>
                 </div>
                 {error ? <p className="text-xs text-red-400">{error}</p> : null}
-                <Button
-                  className="w-full rounded-none"
-                  disabled={acceptMutation.isPending || isCurrentMember}
-                  onClick={() => acceptMutation.mutate()}
-                >
-                  {acceptMutation.isPending ? "Working..." : joinButtonLabel}
-                </Button>
+                {shouldAutoAcceptHumanInvite ? (
+                  <div className="text-sm text-zinc-400">
+                    {acceptMutation.isPending ? "Submitting request..." : "Finishing sign-in..."}
+                  </div>
+                ) : (
+                  <Button
+                    className="w-full rounded-none"
+                    disabled={acceptMutation.isPending || isCurrentMember}
+                    onClick={() => acceptMutation.mutate()}
+                  >
+                    {acceptMutation.isPending ? "Working..." : joinButtonLabel}
+                  </Button>
+                )}
               </div>
             )}
           </section>

@@ -279,6 +279,16 @@ describe("InviteLandingPage", () => {
   });
 
   it("auto-accepts the invite after account creation and redirects into the company", async () => {
+    getSessionMock.mockResolvedValueOnce(null);
+    getSessionMock.mockResolvedValue({
+      session: { id: "session-1", userId: "user-1" },
+      user: {
+        id: "user-1",
+        name: "Jane Example",
+        email: "jane@example.com",
+        image: null,
+      },
+    });
     acceptInviteMock.mockResolvedValue({
       id: "join-1",
       companyId: "company-1",
@@ -333,6 +343,7 @@ describe("InviteLandingPage", () => {
     await flushReact();
     await flushReact();
     await flushReact();
+    await flushReact();
 
     expect(signUpEmailMock).toHaveBeenCalledWith({
       name: "Jane Example",
@@ -383,15 +394,6 @@ describe("InviteLandingPage", () => {
     });
     await flushReact();
     await flushReact();
-
-    const continueButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent === "Accept invite",
-    );
-    expect(continueButton).not.toBeNull();
-
-    await act(async () => {
-      continueButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
     await flushReact();
     await flushReact();
 
@@ -419,6 +421,16 @@ describe("InviteLandingPage", () => {
   });
 
   it("redirects straight to the company after sign-in when the user already has access", async () => {
+    getSessionMock.mockResolvedValueOnce(null);
+    getSessionMock.mockResolvedValue({
+      session: { id: "session-1", userId: "user-1" },
+      user: {
+        id: "user-1",
+        name: "Jane Example",
+        email: "jane@example.com",
+        image: null,
+      },
+    });
     listCompaniesMock.mockResolvedValue([{ id: "company-1", name: "Acme Robotics" }]);
 
     const root = createRoot(container);
@@ -525,6 +537,12 @@ describe("InviteLandingPage", () => {
 
   it("waits for the membership check before showing invite acceptance to signed-in users", async () => {
     let resolveCompanies: ((value: Array<{ id: string; name: string }>) => void) | null = null;
+    acceptInviteMock.mockResolvedValue({
+      id: "join-1",
+      companyId: "company-1",
+      requestType: "human",
+      status: "pending_approval",
+    });
     listCompaniesMock.mockImplementation(
       () =>
         new Promise<Array<{ id: string; name: string }>>((resolve) => {
@@ -560,16 +578,18 @@ describe("InviteLandingPage", () => {
     await flushReact();
 
     expect(container.textContent).toContain("Checking your access...");
-    expect(container.textContent).not.toContain("Join company");
+    expect(container.textContent).not.toContain("Accept company invite");
     expect(acceptInviteMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      resolveCompanies?.([{ id: "company-1", name: "Acme Robotics" }]);
+      resolveCompanies?.([]);
     });
     await flushReact();
     await flushReact();
+    await flushReact();
 
-    expect(acceptInviteMock).not.toHaveBeenCalled();
+    expect(acceptInviteMock).toHaveBeenCalledWith("pcp_invite_test", { requestType: "human" });
+    expect(container.textContent).toContain("Request to join Acme Robotics");
 
     await act(async () => {
       root.unmount();
