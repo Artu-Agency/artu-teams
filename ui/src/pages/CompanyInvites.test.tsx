@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CompanyInvites } from "./CompanyInvites";
+import { queryKeys } from "@/lib/queryKeys";
 
 const listInvitesMock = vi.hoisted(() => vi.fn());
 const createCompanyInviteMock = vi.hoisted(() => vi.fn());
@@ -222,6 +223,42 @@ describe("CompanyInvites", () => {
     await flushReact();
 
     expect(revokeInviteMock).toHaveBeenCalledWith("invite-25");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("ignores legacy cached invite arrays and refetches paginated history", async () => {
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(["access", "invites", "company-1", "all"], inviteHistory.slice(0, 2));
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <CompanyInvites />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(container.textContent).toContain("Board User 25");
+    expect(container.textContent).not.toContain("Board User 5");
+    expect(listInvitesMock).toHaveBeenCalledWith("company-1", { limit: 20, offset: 0 });
+    expect(queryClient.getQueryData(queryKeys.access.invites("company-1", "all", 20))).toMatchObject({
+      pages: [
+        {
+          invites: expect.any(Array),
+          nextOffset: 20,
+        },
+      ],
+    });
 
     await act(async () => {
       root.unmount();

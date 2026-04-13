@@ -39,6 +39,11 @@ const inviteRoleOptions = [
 
 const INVITE_HISTORY_PAGE_SIZE = 20;
 
+function isInviteHistoryRow(value: unknown): value is Awaited<ReturnType<typeof accessApi.listInvites>>["invites"][number] {
+  if (!value || typeof value !== "object") return false;
+  return "id" in value && "state" in value && "createdAt" in value;
+}
+
 export function CompanyInvites() {
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -95,7 +100,10 @@ export function CompanyInvites() {
     getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
   });
   const inviteHistory = useMemo(
-    () => invitesQuery.data?.pages.flatMap((page) => page.invites) ?? [],
+    () =>
+      invitesQuery.data?.pages.flatMap((page) =>
+        Array.isArray(page?.invites) ? page.invites.filter(isInviteHistoryRow) : [],
+      ) ?? [],
     [invitesQuery.data?.pages],
   );
 
