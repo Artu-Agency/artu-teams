@@ -2140,8 +2140,8 @@ export function IssueDetail() {
           />
         </div>
       ) : (
-        <div className="flex justify-start">
-          <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shadow-none">
+        <div className="flex flex-wrap items-center justify-end gap-2 min-w-0">
+          <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shrink-0 shadow-none">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             New Sub-issue
           </Button>
