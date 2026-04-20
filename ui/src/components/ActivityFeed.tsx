@@ -266,8 +266,9 @@ function CollapsedFeedGroup({
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
+        data-fc="card"
         className={cn(
-          "mx-3 my-1.5 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-left text-xs transition-[background-color,border-color,transform] duration-150",
+          "group ml-3 mr-3 md:ml-0 my-2 flex w-[calc(100%-1.5rem)] md:w-[calc(100%-0.75rem)] items-center gap-2 rounded-lg border bg-card p-[18px] text-left text-xs transition-[background-color,border-color,transform] duration-150",
           "cursor-pointer hover:bg-accent hover:border-muted-foreground/30 hover:-translate-y-px",
         )}
       >
@@ -281,12 +282,12 @@ function CollapsedFeedGroup({
             ? <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             : <Settings className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         }
-        <span className="flex-1 min-w-0 truncate text-muted-foreground">
-          <span className="font-medium text-foreground">{actorName}</span>
-          <span className="ml-1">made {group.events.length} updates to</span>
-          <span className="ml-1">{entityName ?? group.entityId}</span>
+        <span className="flex-1 min-w-0 truncate">
+          <span data-fc="actor" className="font-medium text-[#959596] group-hover:text-white">{actorName}</span>
+          <span data-fc="verb" className="ml-1 text-[#959596]">made {group.events.length} updates to</span>
+          <span data-fc="title" className="ml-1 text-[#959596] group-hover:text-white">{entityName ?? group.entityId}</span>
         </span>
-        <span className="font-mono text-muted-foreground shrink-0">
+        <span data-fc="time" className="text-muted-foreground shrink-0">
           {timeAgo(group.latestEvent.createdAt)}
         </span>
       </button>
@@ -692,7 +693,7 @@ export function ActivityFeed({ className }: ActivityFeedProps) {
             </div>
           </div>
         ) : groupMode === "flat" ? (
-          <div>{visibleItems.map((item, i) => renderItem(item, i, visibleItems))}</div>
+          <div className="py-2">{visibleItems.map((item, i) => renderItem(item, i, visibleItems))}</div>
         ) : (
           renderGrouped()
         )}

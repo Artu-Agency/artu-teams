@@ -620,11 +620,12 @@ export function BoardChat() {
             </div>
           </div>
           {/* Messages — scroll viewport flush right so the scrollbar sits on the pane/divider edge */}
+          <div className="relative min-h-0 min-w-0 flex-1">
           <div
             ref={scrollContainerRef}
-            className="scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
+            className="scrollbar-auto-hide absolute inset-0 overflow-y-auto overflow-x-hidden"
           >
-            <div className="flex flex-col gap-4 px-4 py-3">
+            <div className="flex flex-col gap-4 px-6 py-3">
               {/* Typing bubble — shown unconditionally until the reveal
                    timer fires, so the animation is guaranteed to be
                    visible even while agent/goal data is still loading. */}
@@ -770,6 +771,14 @@ export function BoardChat() {
 
               <div ref={messagesEndRef} />
             </div>
+          </div>
+            {/* Bottom fade — softens the transition between the last bubble
+                 and the input field. Uses the pane's background color so it
+                 matches both light and dark themes. */}
+            <div
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent"
+              aria-hidden
+            />
           </div>
 
           {/* Jump-to-latest — shows when user is scrolled away and new content has arrived */}

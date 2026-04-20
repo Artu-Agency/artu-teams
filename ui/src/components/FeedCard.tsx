@@ -11,9 +11,9 @@ import {
   Package,
   User,
   Settings,
-  Clock,
-  CheckCircle2,
-  XCircle,
+  CircleAlert,
+  CircleCheck,
+  CircleSlash,
   PencilLine,
   PauseCircle,
   PlayCircle,
@@ -181,14 +181,15 @@ function getIconSpec(
     return { kind: "lucide", Icon: Loader2, color: "text-muted-foreground" };
   }
 
-  // Approval
+  // Approval — distinct from task status icons (those still use StatusCircle).
+  // Rendered unfilled so the stroke glyph (check / alert / slash) stays visible.
   switch (action) {
     case "approval.created":
-      return { kind: "lucide", Icon: Clock, color: "text-amber-600 dark:text-amber-400", filled: true };
+      return { kind: "lucide", Icon: CircleAlert, color: "text-amber-600 dark:text-amber-400" };
     case "approval.approved":
-      return { kind: "lucide", Icon: CheckCircle2, color: "text-green-600 dark:text-green-400", filled: true };
+      return { kind: "lucide", Icon: CircleCheck, color: "text-green-600 dark:text-green-400" };
     case "approval.rejected":
-      return { kind: "lucide", Icon: XCircle, color: "text-red-600 dark:text-red-400", filled: true };
+      return { kind: "lucide", Icon: CircleSlash, color: "text-red-600 dark:text-red-400" };
     case "approval.revision_requested":
       return { kind: "lucide", Icon: PencilLine, color: "text-amber-600 dark:text-amber-400", filled: true };
   }
@@ -268,6 +269,9 @@ interface CardContent {
   actorType: ActivityEvent["actorType"];
   actor: Agent | null;
   identifier: string | null;
+  /** When true, render identifier in JetBrains Mono. Reserved for task
+   *  slugs (e.g. FOA-2) and agent names. */
+  identifierMono: boolean;
   title: string | null;
   link: string | null;
 }
@@ -328,18 +332,22 @@ function resolveContent(
               : null;
 
   let identifier: string | null = null;
+  let identifierMono = true;
   let title: string | null = null;
 
   if (event.entityType === "issue") {
-    if (isDocEvent && docKey) {
-      identifier = `${entityName ?? event.entityId}#${docKey}`;
-      title = entityTitle;
-    } else {
-      identifier = entityName;
-      title = entityTitle;
-    }
+    // Docs (e.g. FOA-2#hiring-plan) previously showed the doc key, but it
+    // duplicates the human-readable title that follows. Show just the task
+    // slug; the title carries the document name.
+    identifier = entityName;
+    title = entityTitle;
   } else if (event.entityType === "approval") {
-    identifier = approvalAgentName ?? (approvalType ? humanize(approvalType) : "approval");
+    if (approvalAgentName) {
+      identifier = approvalAgentName;
+    } else {
+      identifier = approvalType ? humanize(approvalType) : "approval";
+      identifierMono = false;
+    }
     title = entityTitle;
   } else if (event.entityType === "agent") {
     identifier = (details?.name as string | undefined) ?? entityName ?? event.entityId;
@@ -357,6 +365,7 @@ function resolveContent(
     actorType: event.actorType,
     actor,
     identifier,
+    identifierMono,
     title,
     link,
   };
@@ -415,12 +424,14 @@ export function FeedCard({
   const verb = formatVerb(event.action, details, isPinned ? "pinned" : "chronological");
   const iconSpec = getIconSpec(event, details, isActive);
 
-  const textColor = isMuted ? "text-muted-foreground" : "text-foreground";
+  const mutedTextBase = isMuted ? "text-muted-foreground/70" : "text-[#959596]";
+  const mutedTextHover = isMuted ? "" : "group-hover:text-white";
 
   const card = (
     <div
+      data-fc="card"
       className={cn(
-        "mx-3 my-1 flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs",
+        "group ml-3 mr-3 md:ml-0 my-2 flex items-center gap-2 rounded-lg border bg-card p-[18px] text-xs",
         "transition-[background-color,border-color,transform] duration-150",
         content.link && "cursor-pointer hover:bg-accent hover:border-muted-foreground/30 hover:-translate-y-px",
         className,
@@ -429,19 +440,31 @@ export function FeedCard({
       <EntityIcon spec={iconSpec} />
       <ActorGlyph content={content} />
       <span className="flex min-w-0 flex-1 items-baseline gap-1 truncate">
-        <span className="font-medium text-foreground">{content.actorName}</span>
-        <span className={textColor}>{verb}</span>
+        <span data-fc="actor" className={cn("font-medium", mutedTextBase, mutedTextHover)}>
+          {content.actorName}
+        </span>
+        <span data-fc="verb" className={mutedTextBase}>{verb}</span>
         {content.identifier && (
-          <span className={cn("font-mono", textColor)}>{content.identifier}</span>
+          <span
+            data-fc="id"
+            className={cn(content.identifierMono && "font-mono", mutedTextBase, mutedTextHover)}
+          >
+            {content.identifier}
+          </span>
         )}
         {content.title && (
-          <span className="truncate text-muted-foreground">{content.title}</span>
+          <span
+            data-fc="title"
+            className={cn("truncate", mutedTextBase, mutedTextHover)}
+          >
+            {content.title}
+          </span>
         )}
       </span>
       {isPinned && (
         <span className="shrink-0 text-xs text-muted-foreground">Review →</span>
       )}
-      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+      <span data-fc="time" className="shrink-0 text-muted-foreground">
         {timeAgo(event.createdAt)}
       </span>
     </div>

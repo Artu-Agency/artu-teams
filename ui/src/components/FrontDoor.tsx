@@ -1,4 +1,4 @@
-import { Rocket, Sparkles } from "lucide-react";
+import { Rocket, Zap } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface FrontDoorProps {
@@ -46,10 +46,10 @@ export function FrontDoor({ onChoose }: FrontDoorProps) {
           onClick={() => onChoose("grow")}
         >
           <div className="rounded-full bg-muted/50 p-3 group-hover:bg-accent transition-colors">
-            <Sparkles className="h-6 w-6" />
+            <Zap className="h-6 w-6" />
           </div>
           <div>
-            <h3 className="font-semibold text-sm">Grow my existing company</h3>
+            <h3 className="font-semibold text-sm">Level up my existing company</h3>
             <p className="text-xs text-muted-foreground mt-1">
               Add AI-powered agents to your current workflows.
             </p>
