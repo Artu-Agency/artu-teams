@@ -25,6 +25,7 @@ import {
 import { getUIAdapter } from "../adapters";
 import { defaultCreateValues } from "./agent-config-defaults";
 import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
+import { composeCeoInstructions } from "../lib/ceo-instructions";
 import {
   buildOnboardingIssuePayload,
   buildOnboardingProjectPayload,
@@ -784,46 +785,34 @@ export function OnboardingWizard() {
         queryKey: queryKeys.agents.list(createdCompanyId)
       });
 
-      // Create the planning task unassigned — the CEO only gets assigned
-      // when the user sends their first message (user controls initiation)
-      const isGrowPath = onboardingPath === "grow";
-      const growContext = isGrowPath
-        ? `\n\nExisting workflows: ${growWorkflows}\nPain points: ${growPainPoints}\nFirst automation priority: ${growAutomate}`
-        : "";
-      const planningIssue = await issuesApi.create(createdCompanyId, {
-        title: isGrowPath ? "Plan AI agents for existing company" : "Strategy & hiring plan with CEO",
-        description: `Company mission: ${companyGoal}${growContext}
+      // Seed the CEO's agent instructions file so the agent always has
+      // company context + a hiring-plan output format rule. Non-fatal on
+      // failure — the agent can still function with adapter defaults.
+      try {
+        const bundle = await agentsApi.instructionsBundle(agent.id, createdCompanyId);
+        await agentsApi.saveInstructionsFile(
+          agent.id,
+          {
+            path: bundle.entryFile,
+            content: composeCeoInstructions({
+              companyName,
+              companyGoal,
+              growPath: onboardingPath === "grow",
+              growWorkflows,
+              growPainPoints,
+              growAutomate,
+              q1, q2, q3, q4,
+            }),
+          },
+          createdCompanyId,
+        );
+      } catch (err) {
+        console.warn("Failed to seed CEO instructions:", err);
+      }
 
-You are the CEO of this company. The board (the user) has just appointed you. Your first conversation should focus on STRATEGY — ask the board about their vision, priorities, and constraints. DO NOT immediately create a hiring plan. Instead:
-
-1. FIRST: Greet the board briefly, then ask strategic questions to understand their priorities. Have a real conversation.
-2. ONLY WHEN the board says they're ready (e.g. "let's build the plan", "get started", "hire the team"), THEN create the hiring plan document.
-3. When you do create the plan, save it as a document using the plan key.${isGrowPath ? "\n4. Focus on agents that address the existing pain points and automate current workflows." : ""}
-
-When writing the hiring plan document, use this exact format for EACH role. Use ## headings for each role (e.g. "## 1. Role Name") and ### sub-headings for each section within the role:
-
-## 1. Role Name
-### Summary
-One-line description of this role.
-### Expertise & Responsibilities
-What this agent does, detailed responsibilities.
-### Priorities
-Ordered list of what matters most.
-### Boundaries
-What this role should NOT do.
-### Tools & Permissions
-What tools and access this role needs.
-### Communication
-Tone, style, and interaction guidelines.
-### Collaboration & Escalation
-Who this role works with, escalation paths.
-
-Follow this structure for every role in the plan.`,
-        status: "backlog"
-      });
-      setPlanningTaskId(planningIssue.id);
-
-      // Go to launch celebration step (step 3)
+      // Go to launch celebration step (step 3). No planning task is
+      // pre-created — the user spawns hiring plans, briefs, etc. from the
+      // Conference Room when they're ready.
       setStep(3);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create agent");
@@ -998,7 +987,7 @@ Follow this structure for every role in the plan.`,
                 {(
                   [
                     { step: 1 as Step, label: "Mission", icon: Building2 },
-                    { step: 2 as Step, label: "CEO", icon: Bot },
+                    { step: 2 as Step, label: "Team lead", icon: Bot },
                     { step: 3 as Step, label: "Launch", icon: Rocket },
                   ] as const
                 ).map(({ step: s, label, icon: Icon }) => (
@@ -1384,11 +1373,11 @@ Follow this structure for every role in the plan.`,
                       <Bot className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <div>
-                      <h3 className="font-medium">Bring your CEO to life</h3>
+                      <h3 className="font-medium">Hire your team lead</h3>
                       <p className="text-xs text-muted-foreground">
-                        Give your CEO a heartbeat. They'll lead{" "}
+                        Give your team lead a heartbeat. They'll help lead{" "}
                         <span className="font-medium text-foreground">{companyName}</span>{" "}
-                        toward its mission.
+                        toward its mission. Most people call this role CEO, which is why that's the default name.
                       </p>
                     </div>
                   </div>

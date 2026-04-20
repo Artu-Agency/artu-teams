@@ -11,6 +11,7 @@ import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
+import { goalsApi } from "../api/goals";
 import { queryKeys } from "../lib/queryKeys";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Activity, History, MessageSquarePlus, Send, X } from "lucide-react";
+import { Activity, ArrowDown, History, MessageSquarePlus, Send, X } from "lucide-react";
 import { ActivityFeed } from "../components/ActivityFeed";
 import { cn } from "../lib/utils";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -42,6 +43,26 @@ const BOARD_CHAT_MARKDOWN_CLASS =
 
 const boardChatBubbleShell =
   "min-w-0 max-w-[85%] break-words px-3 py-2 text-sm overflow-x-auto overflow-y-visible";
+
+/** Agent-styled chat bubble containing the three-dot typing indicator. */
+function TypingBubble() {
+  return (
+    <div className="flex justify-start">
+      <div
+        className={cn(
+          boardChatBubbleShell,
+          "bg-card border border-border text-foreground [border-radius:14px_14px_14px_4px]",
+        )}
+      >
+        <span className="typing-dots" aria-label="typing">
+          <span />
+          <span />
+          <span />
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function BoardChat() {
   const { selectedCompanyId, selectedCompany } = useCompany();
@@ -125,6 +146,9 @@ export function BoardChat() {
   );
 
   const [input, setInput] = useState("");
+  /** Guards the draft-persistence effect so it doesn't overwrite a saved
+   *  draft with "" before we've had a chance to load it. */
+  const loadedDraftCompanyRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [statusText, setStatusText] = useState("");
@@ -137,7 +161,38 @@ export function BoardChat() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Reset state and clear cached comments when company changes
+  /** True when the user is scrolled away from the bottom AND new content
+   *  has arrived they can't see. Drives the floating "jump to latest" chip. */
+  const [hasNewBelow, setHasNewBelow] = useState(false);
+
+  const isNearBottom = useCallback((threshold = 80) => {
+    const c = scrollContainerRef.current;
+    if (!c) return true;
+    return c.scrollHeight - c.scrollTop - c.clientHeight <= threshold;
+  }, []);
+
+  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
+    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+    setHasNewBelow(false);
+  }, []);
+
+  // Welcome typing intro: play the typing animation before revealing the
+  // team lead's welcome bubble. Plays on every fresh mount while the
+  // conversation is still new; once the user has replied, the welcome
+  // shows immediately (no intro for return visits to an active chat).
+  const [welcomeRevealed, setWelcomeRevealed] = useState(false);
+  /** Locks the typing-intro start time so that effect re-fires (e.g.
+   *  from new query data) don't reset the timer back to zero. */
+  const welcomeTimerStartRef = useRef<number | null>(null);
+  /** Minimum time the typing bubble stays visible before we reveal the
+   *  welcome. 2.5s feels intentional without stalling the first-arrival
+   *  experience. */
+  const WELCOME_TYPING_MS = 2500;
+
+  // Reset state and clear cached comments when company changes. The
+  // composer draft is NOT wiped — it's loaded from per-company
+  // sessionStorage in the effect below so users don't lose typed content
+  // when switching between companies or navigating away and back.
   const prevCompanyRef = useRef(selectedCompanyId);
   useEffect(() => {
     if (prevCompanyRef.current !== selectedCompanyId) {
@@ -147,12 +202,43 @@ export function BoardChat() {
       setBoardIssueId(null);
       setStreamingText("");
       setStatusText("");
-      setInput("");
       setSending(false);
       setOptimisticMessage(null);
       prevCompanyRef.current = selectedCompanyId;
     }
   }, [selectedCompanyId, boardIssueId, queryClient]);
+
+  // Load a saved composer draft (if any) whenever the active company
+  // changes — runs on first mount too.
+  useEffect(() => {
+    if (!selectedCompanyId) return;
+    if (loadedDraftCompanyRef.current === selectedCompanyId) return;
+    try {
+      const saved = sessionStorage.getItem(
+        `paperclip.boardChat.draft.${selectedCompanyId}`,
+      );
+      setInput(saved ?? "");
+    } catch {
+      setInput("");
+    }
+    loadedDraftCompanyRef.current = selectedCompanyId;
+  }, [selectedCompanyId]);
+
+  // Persist composer draft to sessionStorage on change (per company).
+  // Only runs after the initial load for this company to avoid clobbering
+  // a saved draft with an empty initial value.
+  useEffect(() => {
+    if (!selectedCompanyId) return;
+    if (loadedDraftCompanyRef.current !== selectedCompanyId) return;
+    try {
+      const key = `paperclip.boardChat.draft.${selectedCompanyId}`;
+      if (input) {
+        sessionStorage.setItem(key, input);
+      } else {
+        sessionStorage.removeItem(key);
+      }
+    } catch { /* sessionStorage unavailable */ }
+  }, [input, selectedCompanyId]);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
@@ -164,6 +250,19 @@ export function BoardChat() {
     () => agents?.find((a) => a.role === "ceo" && a.status !== "terminated"),
     [agents],
   );
+
+  // Pull the company's top-level goal so the CEO's welcome can reference
+  // the mission verbatim.
+  const { data: goals } = useQuery({
+    queryKey: queryKeys.goals.list(selectedCompanyId!),
+    queryFn: () => goalsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const missionText = useMemo(() => {
+    const active = (goals ?? []).find((g) => g.status === "active");
+    return active?.title ?? null;
+  }, [goals]);
 
   // Find or detect the board operations issue
   const { data: issues } = useQuery({
@@ -194,6 +293,36 @@ export function BoardChat() {
   const sortedComments = (comments ?? [])
     .slice()
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  // Reveal the welcome after a typing delay, once we have the data
+  // needed to render it. If the user has already replied in this
+  // conversation, skip the delay — the welcome isn't a "new" event.
+  //
+  // Depends on `comments` (stable ref via React Query) rather than the
+  // derived `sortedComments` (new array every render), so the effect
+  // doesn't re-fire on unrelated renders. The start time is anchored in
+  // a ref so any legitimate re-fire (new data) recomputes the remaining
+  // time from the original anchor instead of resetting to 0.
+  useEffect(() => {
+    if (welcomeRevealed) return;
+    if (!ceoAgent || !selectedCompany) return;
+
+    const userHasReplied = (comments ?? []).some(
+      (c) => !c.authorAgentId && c.authorUserId !== "board-concierge",
+    );
+    if (userHasReplied) {
+      setWelcomeRevealed(true);
+      return;
+    }
+
+    if (welcomeTimerStartRef.current == null) {
+      welcomeTimerStartRef.current = Date.now();
+    }
+    const elapsed = Date.now() - welcomeTimerStartRef.current;
+    const remaining = Math.max(0, WELCOME_TYPING_MS - elapsed);
+    const timeout = setTimeout(() => setWelcomeRevealed(true), remaining);
+    return () => clearTimeout(timeout);
+  }, [welcomeRevealed, ceoAgent, selectedCompany, comments]);
 
   // Clear optimistic message once server-persisted comments include it
   useEffect(() => {
@@ -235,22 +364,34 @@ export function BoardChat() {
     hasRestoredScrollRef.current = true;
   }, [sortedComments.length]);
 
+  // User sent a message: always scroll so their just-typed message is in
+  // view, even if they were scrolled up reading history.
+  useEffect(() => {
+    if (!optimisticMessage) return;
+    scrollToLatest("smooth");
+  }, [optimisticMessage, scrollToLatest]);
+
+  // Agent activity (new persisted comment, streaming chunks, status):
+  // auto-scroll only if the user is already near the bottom. Otherwise
+  // raise the "new below" flag so the floating jump button appears.
   useEffect(() => {
     if (!hasRestoredScrollRef.current) return;
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom <= 80) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isNearBottom()) {
+      scrollToLatest("smooth");
+    } else {
+      setHasNewBelow(true);
     }
-  }, [sortedComments.length, streamingText, statusText, optimisticMessage]);
+  }, [sortedComments.length, streamingText, statusText, isNearBottom, scrollToLatest]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     let rafId: number | null = null;
     const handleScroll = () => {
+      // Clear "new below" flag when the user scrolls back near the bottom.
+      const near = container.scrollHeight - container.scrollTop - container.clientHeight <= 80;
+      if (near) setHasNewBelow(false);
+
       if (rafId != null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
@@ -415,7 +556,7 @@ export function BoardChat() {
         {/* Left: chat (self-contained pane) — full width on mobile, 2/3 default on desktop */}
         <div
           className={cn(
-            "flex min-h-0 min-w-0 shrink-0 flex-col bg-background",
+            "relative flex min-h-0 min-w-0 shrink-0 flex-col bg-background",
             "w-full md:w-auto",
             innerWidth <= 0 && "md:w-2/3",
           )}
@@ -471,29 +612,75 @@ export function BoardChat() {
             className="scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
           >
             <div className="flex flex-col gap-4 px-4 py-3">
-              {sortedComments.length === 0 && !streamingText && !sending && !optimisticMessage && (
-                <div className="py-12 text-center">
-                  <p className="mb-4 text-sm text-muted-foreground">
-                    Ask me anything about your company — hiring, tasks, costs, approvals.
-                  </p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {[
-                      "What's happening today?",
-                      "Help me build a hiring plan",
-                      "Show me my costs",
-                      "List pending approvals",
-                    ].map((suggestion) => (
-                      <button
-                        key={suggestion}
-                        onClick={() => sendMessage(suggestion)}
-                        className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {ceoAgent && selectedCompany && (() => {
+                const ceoName = ceoAgent.name;
+                const companyName = selectedCompany.name;
+                const missionLine = missionText
+                  ? ` — your mission is "${missionText}".`
+                  : ".";
+                const welcomeBody =
+                  `Welcome to **${companyName}**! I'm ${ceoName}, your team lead. I've read through what you shared in the wizard${missionLine}\n\n` +
+                  `Here are a few things I can help you put on paper right now. Pick one below and I'll draft it for you using everything you told us.`;
+
+                const userHasReplied = sortedComments.some(
+                  (c) => !c.authorAgentId && c.authorUserId !== "board-concierge",
+                );
+
+                const chips: Array<{ label: string; prompt: string }> = [
+                  {
+                    label: "Draft a Company Brief",
+                    prompt: `Draft a one-page Company Brief for ${companyName} — include our mission, team roster, and first priorities.`,
+                  },
+                  {
+                    label: "Create a hiring plan",
+                    prompt: `Create a hiring plan for ${companyName}. List the next roles to hire, in priority order, with a short rationale for each.`,
+                  },
+                  {
+                    label: "Outline our first 30 days",
+                    prompt: `Outline our first 30 days. Break it into weekly priorities with who owns what.`,
+                  },
+                  {
+                    label: "Write an intro pitch",
+                    prompt: `Write a short intro pitch for ${companyName} that I could reuse for investors, customers, or recruits.`,
+                  },
+                ];
+
+                return (
+                  <>
+                    {welcomeRevealed ? (
+                      <div className="flex justify-start">
+                        <div
+                          className={cn(
+                            boardChatBubbleShell,
+                            "bg-card border border-border text-foreground [border-radius:14px_14px_14px_4px]",
+                          )}
+                        >
+                          <MarkdownBody className={BOARD_CHAT_MARKDOWN_CLASS}>{welcomeBody}</MarkdownBody>
+                        </div>
+                      </div>
+                    ) : (
+                      <TypingBubble />
+                    )}
+                    {welcomeRevealed && !userHasReplied && (
+                      <div className="flex flex-wrap gap-2 pl-1">
+                        {chips.map((chip) => (
+                          <button
+                            key={chip.label}
+                            type="button"
+                            onClick={() => {
+                              setInput(chip.prompt);
+                              inputRef.current?.focus();
+                            }}
+                            className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
+                          >
+                            {chip.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {sortedComments.map((comment) => {
                 const isUser = !comment.authorAgentId && comment.authorUserId !== "board-concierge";
@@ -510,9 +697,13 @@ export function BoardChat() {
                           : "bg-card border border-border text-foreground [border-radius:14px_14px_14px_4px]",
                       )}
                     >
-                      <MarkdownBody className={BOARD_CHAT_MARKDOWN_CLASS}>
-                        {comment.body ?? ""}
-                      </MarkdownBody>
+                      {isUser ? (
+                        comment.body ?? ""
+                      ) : (
+                        <MarkdownBody className={BOARD_CHAT_MARKDOWN_CLASS}>
+                          {comment.body ?? ""}
+                        </MarkdownBody>
+                      )}
                     </div>
                   </div>
                 );
@@ -546,6 +737,12 @@ export function BoardChat() {
                 </div>
               )}
 
+              {/* Typing bubble — sits above the status line while the agent
+                   is preparing a reply but no text has streamed yet. Shows
+                   alongside the user's optimistic bubble to make the
+                   turn-taking feel alive. */}
+              {sending && !streamingText && <TypingBubble />}
+
               {/* Status bar — always visible while sending, independent from the chat bubble */}
               {sending && (
                 <div className="flex items-center gap-2 pl-1 text-xs text-muted-foreground">
@@ -560,6 +757,19 @@ export function BoardChat() {
               <div ref={messagesEndRef} />
             </div>
           </div>
+
+          {/* Jump-to-latest — shows when user is scrolled away and new content has arrived */}
+          {hasNewBelow && (
+            <button
+              type="button"
+              onClick={() => scrollToLatest("smooth")}
+              aria-label="Jump to latest messages"
+              className="absolute bottom-24 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground shadow-md transition-all duration-150 hover:bg-accent hover:border-muted-foreground/30 hover:-translate-x-1/2 hover:-translate-y-0.5"
+            >
+              <ArrowDown className="h-3 w-3" />
+              New messages
+            </button>
+          )}
 
           {/* Input */}
           <div className="shrink-0 px-6 pt-3 pb-5">

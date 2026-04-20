@@ -168,7 +168,18 @@ function StatusCircle({ status, className }: { status: string; className?: strin
 /*  Actor Icon                                                         */
 /* ------------------------------------------------------------------ */
 
-function ActorIcon({ event, agentMap }: { event: ActivityEvent; agentMap: Map<string, Agent> }) {
+function ActorIcon({
+  event,
+  agentMap,
+  overrideAgent,
+}: {
+  event: ActivityEvent;
+  agentMap: Map<string, Agent>;
+  overrideAgent?: Agent | null;
+}) {
+  if (overrideAgent) {
+    return <AgentIcon icon={overrideAgent.icon ?? null} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+  }
   if (event.actorType === "agent") {
     const agent = agentMap.get(event.actorId);
     return <AgentIcon icon={agent?.icon ?? null} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
@@ -206,13 +217,30 @@ export function FeedCard({
   className,
 }: FeedCardProps) {
   const actor = event.actorType === "agent" ? agentMap.get(event.actorId) : null;
-  const actorName = actor?.name
+  const details = event.details as Record<string, unknown> | null;
+  const entityTitle = entityTitleMap?.get(`${event.entityType}:${event.entityId}`);
+
+  // Attribution override: the Board concierge chat runs as the user, so any
+  // documents it drafts inside a Conference Room conversation get logged
+  // with actorType="user" ("Board"). Re-attribute those to the CEO agent
+  // so the feed reads naturally.
+  const isBoardOpsDocEvent =
+    event.entityType === "issue" &&
+    event.actorType === "user" &&
+    (event.action === "issue.document_created" ||
+      event.action === "issue.document_updated") &&
+    entityTitle === "Board Operations";
+  const ceoOverride: Agent | null = isBoardOpsDocEvent
+    ? Array.from(agentMap.values()).find(
+        (a) => a.role === "ceo" && a.status !== "terminated",
+      ) ?? null
+    : null;
+
+  const displayActor = ceoOverride ?? actor;
+  const actorName = displayActor?.name
     ?? (event.actorType === "system" ? "System"
       : event.actorType === "user" ? "Board"
       : event.actorId || "Unknown");
-
-  const details = event.details as Record<string, unknown> | null;
-  const entityTitle = entityTitleMap?.get(`${event.entityType}:${event.entityId}`);
 
   // Heartbeat events live on `heartbeat_run` with agentId in details —
   // resolve the display name from the agent, and link to the run page.
@@ -276,7 +304,7 @@ export function FeedCard({
     const card = (
       <div className={cn(shellBase, "my-1.5 px-3 py-1.5 text-xs", hoverClasses, className)}>
         <div className="flex items-center gap-2 min-w-0">
-          <ActorIcon event={event} agentMap={agentMap} />
+          <ActorIcon event={event} agentMap={agentMap} overrideAgent={ceoOverride} />
           <span className="flex-1 min-w-0 truncate text-muted-foreground">
             <span className="font-medium text-foreground">{actorName}</span>
             <span className="ml-1">{verb}</span>
@@ -351,7 +379,7 @@ export function FeedCard({
       {/* Meta line: actor icon + name + verb + timestamp */}
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-1.5 min-w-0">
-          <ActorIcon event={event} agentMap={agentMap} />
+          <ActorIcon event={event} agentMap={agentMap} overrideAgent={ceoOverride} />
           <span className="text-xs font-medium truncate text-muted-foreground">{actorName}</span>
           <span className="text-muted-foreground truncate text-xs">
             {actionLabel(event.action, details)}
