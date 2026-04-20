@@ -20,6 +20,9 @@ import type { LiveRunForIssue } from "@/api/heartbeats";
 
 const now = new Date("2026-04-20T12:00:00.000Z");
 const recent = (minutesAgo: number) => new Date(now.getTime() - minutesAgo * 60_000);
+const storybookRepoRoot = "~/paperclip";
+const storybookWorkspaceRoot = `${storybookRepoRoot}/.paperclip/workspaces`;
+const storybookWorktreeRoot = `${storybookRepoRoot}/.paperclip/worktrees`;
 
 export const storybookCompanies: Company[] = [
   {
@@ -313,7 +316,7 @@ function createRuntimeService(
     lifecycle: overrides.lifecycle ?? "ephemeral",
     reuseKey: overrides.reuseKey ?? "storybook",
     command: overrides.command ?? "pnpm storybook",
-    cwd: overrides.cwd ?? "/Users/dotta/paperclip/ui",
+    cwd: overrides.cwd ?? `${storybookRepoRoot}/ui`,
     port: overrides.port ?? 6006,
     url: overrides.url ?? "http://localhost:6006",
     provider: overrides.provider ?? "local_process",
@@ -358,7 +361,7 @@ export const storybookProjectWorkspaces: Project["workspaces"] = [
     projectId: "project-board-ui",
     name: "Board UI",
     sourceType: "local_path" as const,
-    cwd: "/Users/dotta/paperclip/ui",
+    cwd: `${storybookRepoRoot}/ui`,
     repoUrl: "https://github.com/paperclipai/paperclip",
     repoRef: "master",
     defaultRef: "master",
@@ -446,7 +449,7 @@ export const storybookProjectWorkspaces: Project["workspaces"] = [
     projectId: "project-board-ui",
     name: "Release smoke local checkout",
     sourceType: "local_path",
-    cwd: "/Users/dotta/paperclip/.paperclip/workspaces/release-smoke",
+    cwd: `${storybookWorkspaceRoot}/release-smoke`,
     repoUrl: "https://github.com/paperclipai/paperclip",
     repoRef: "release/smoke-2026-04-20",
     defaultRef: "master",
@@ -490,7 +493,7 @@ export const storybookExecutionWorkspaces: ExecutionWorkspace[] = [
     strategyType: "git_worktree",
     name: "PAP-1641 storybook worktree",
     status: "active",
-    cwd: "/Users/dotta/paperclip/.paperclip/worktrees/PAP-1641-create-super-detailed-storybooks-for-our-project",
+    cwd: `${storybookWorktreeRoot}/PAP-1641-create-super-detailed-storybooks-for-our-project`,
     repoUrl: "https://github.com/paperclipai/paperclip",
     baseRef: "master",
     branchName: "PAP-1641-create-super-detailed-storybooks-for-our-project",
@@ -518,7 +521,7 @@ export const storybookExecutionWorkspaces: ExecutionWorkspace[] = [
     strategyType: "git_worktree",
     name: "PAP-1608 release smoke cleanup",
     status: "cleanup_failed",
-    cwd: "/Users/dotta/paperclip/.paperclip/worktrees/PAP-1608-release-smoke-cleanup",
+    cwd: `${storybookWorktreeRoot}/PAP-1608-release-smoke-cleanup`,
     repoUrl: "https://github.com/paperclipai/paperclip",
     baseRef: "master",
     branchName: "PAP-1608-release-smoke-cleanup",
@@ -590,7 +593,7 @@ function createProject(overrides: Partial<Project> = {}): Project {
         type: "git_worktree",
         baseRef: "master",
         branchTemplate: "{issueIdentifier}-{slug}",
-        worktreeParentDir: "/Users/dotta/paperclip/.paperclip/worktrees",
+        worktreeParentDir: storybookWorktreeRoot,
         provisionCommand: null,
         teardownCommand: null,
       },
@@ -606,9 +609,9 @@ function createProject(overrides: Partial<Project> = {}): Project {
       repoRef: "master",
       defaultRef: "master",
       repoName: "paperclip",
-      localFolder: "/Users/dotta/paperclip",
+      localFolder: storybookRepoRoot,
       managedFolder: ".paperclip/worktrees/storybook",
-      effectiveLocalFolder: "/Users/dotta/paperclip",
+      effectiveLocalFolder: storybookRepoRoot,
       origin: "local_folder",
     },
     workspaces: storybookProjectWorkspaces,
