@@ -60,4 +60,37 @@ describe("IssueRelatedWorkPanel", () => {
     expect(html).toContain("plan");
     expect(html).toContain("comment");
   });
+
+  it("collapses duplicate source labels into a single chip with a count", () => {
+    const html = renderToStaticMarkup(
+      <IssueRelatedWorkPanel
+        relatedWork={{
+          outbound: [],
+          inbound: [
+            {
+              issue: {
+                id: "issue-4",
+                identifier: "PAP-44",
+                title: "Chatty inbound",
+                status: "in_progress",
+                priority: "medium",
+                assigneeAgentId: null,
+                assigneeUserId: null,
+              },
+              mentionCount: 3,
+              sources: [
+                { kind: "comment", sourceRecordId: "c1", label: "comment", matchedText: "PAP-44 first" },
+                { kind: "comment", sourceRecordId: "c2", label: "comment", matchedText: "PAP-44 second" },
+                { kind: "comment", sourceRecordId: "c3", label: "comment", matchedText: "PAP-44 third" },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const commentMatches = html.match(/>comment</g) ?? [];
+    expect(commentMatches).toHaveLength(1);
+    expect(html).toContain("×3");
+  });
 });

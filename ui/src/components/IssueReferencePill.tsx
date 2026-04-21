@@ -1,12 +1,16 @@
 import type { IssueRelationIssueSummary } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { cn } from "../lib/utils";
+import { StatusIcon } from "./StatusIcon";
 
 export function IssueReferencePill({
   issue,
+  strikethrough,
   className,
 }: {
-  issue: Pick<IssueRelationIssueSummary, "id" | "identifier" | "title">;
+  issue: Pick<IssueRelationIssueSummary, "id" | "identifier" | "title"> &
+    Partial<Pick<IssueRelationIssueSummary, "status">>;
+  strikethrough?: boolean;
   className?: string;
 }) {
   const issueLabel = issue.identifier ?? issue.id;
@@ -14,14 +18,22 @@ export function IssueReferencePill({
   return (
     <Link
       to={`/issues/${issueLabel}`}
+      data-mention-kind="issue"
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-accent/50",
+        "paperclip-mention-chip paperclip-mention-chip--issue",
+        "inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs no-underline",
+        "hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring",
+        strikethrough && "opacity-60 line-through decoration-muted-foreground",
         className,
       )}
       title={issue.title}
       aria-label={`Issue ${issueLabel}: ${issue.title}`}
     >
-      <span className="h-1.5 w-1.5 rounded-[0.2rem] bg-current opacity-70" />
+      {issue.status ? (
+        <StatusIcon status={issue.status} className="h-3 w-3 shrink-0" />
+      ) : (
+        <span className="h-1.5 w-1.5 rounded-[0.14rem] bg-current opacity-70" />
+      )}
       <span>{issue.identifier ?? issue.title}</span>
     </Link>
   );

@@ -1,6 +1,29 @@
 import type { IssueRelatedWorkItem, IssueRelatedWorkSummary } from "@paperclipai/shared";
 import { IssueReferencePill } from "./IssueReferencePill";
 
+type GroupedSource = {
+  label: string;
+  count: number;
+  sampleMatchedText: string | null;
+};
+
+function groupSourcesByLabel(sources: IssueRelatedWorkItem["sources"]): GroupedSource[] {
+  const groups = new Map<string, GroupedSource>();
+  for (const source of sources) {
+    const existing = groups.get(source.label);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      groups.set(source.label, {
+        label: source.label,
+        count: 1,
+        sampleMatchedText: source.matchedText ?? null,
+      });
+    }
+  }
+  return Array.from(groups.values());
+}
+
 function Section({
   title,
   description,
@@ -15,39 +38,46 @@ function Section({
   return (
     <section className="space-y-3 rounded-lg border border-border p-3">
       <div className="space-y-1">
-        <h3 className="text-sm font-medium">{title}</h3>
+        <h3 className="text-sm font-semibold">{title}</h3>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
 
       {items.length === 0 ? (
         <p className="text-xs text-muted-foreground">{emptyLabel}</p>
       ) : (
-        <div className="space-y-2">
-          {items.map((item) => (
-            <div key={item.issue.id} className="space-y-2 rounded-md border border-border/60 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-2">
+        <ul className="-mx-1 flex flex-col">
+          {items.map((item) => {
+            const groupedSources = groupSourcesByLabel(item.sources);
+            const showTitle = item.issue.identifier !== item.issue.title;
+            return (
+              <li
+                key={item.issue.id}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md px-1 py-1.5 hover:bg-accent/40"
+              >
                 <IssueReferencePill issue={item.issue} />
-                {item.issue.identifier !== item.issue.title ? (
-                  <span className="text-sm text-muted-foreground">{item.issue.title}</span>
-                ) : null}
-                <span className="ml-auto text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                  {item.mentionCount} source{item.mentionCount === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {item.sources.map((source) => (
-                  <span
-                    key={`${item.issue.id}:${source.kind}:${source.sourceRecordId ?? "root"}`}
-                    className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground"
-                    title={source.matchedText ?? undefined}
-                  >
-                    {source.label}
+                {showTitle ? (
+                  <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                    {item.issue.title}
                   </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {groupedSources.map((group) => (
+                    <span
+                      key={`${item.issue.id}:${group.label}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+                      title={group.sampleMatchedText ?? undefined}
+                    >
+                      <span>{group.label}</span>
+                      {group.count > 1 ? (
+                        <span className="tabular-nums text-[10px] font-medium opacity-80">×{group.count}</span>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </section>
   );
