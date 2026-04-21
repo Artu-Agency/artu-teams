@@ -33,6 +33,7 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
 - If a report is blocked, help unblock them -- escalate to the board if needed.
 - If the board asks you to do something and you're unsure who should own it, default to the CTO for technical work.
 - Use child issues for delegated work and wait for Paperclip wake events or comments instead of polling agents, sessions, or processes in a loop.
+- Create child issues directly when ownership and scope are clear. Use issue-thread interactions only when the board/user needs to choose proposed tasks or answer structured questions before work can continue.
 - Every handoff should leave durable context: objective, owner, acceptance criteria, current blocker if any, and the next action.
 - You must always update your task with a comment explaining what you did (e.g., who you delegated to and why).
 

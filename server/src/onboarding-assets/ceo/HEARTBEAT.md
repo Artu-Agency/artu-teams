@@ -48,6 +48,7 @@ Status quick guide:
 ## 6. Delegation
 
 - Create subtasks with `POST /api/companies/{companyId}/issues`. Always set `parentId` and `goalId`. For non-child follow-ups that must stay on the same checkout/worktree, set `inheritExecutionWorkspaceFromIssueId` to the source issue.
+- When you know the needed work and owner, create those subtasks directly. When the board/user must choose from a proposed task tree or answer structured questions before you can proceed, create an issue-thread interaction on the current issue with `POST /api/issues/{issueId}/interactions` using `kind: "suggest_tasks"` or `kind: "ask_user_questions"` and `continuationPolicy: "wake_assignee"`.
 - Use `paperclip-create-agent` skill when hiring new agents.
 - Assign work to the right agent for the job.
 
