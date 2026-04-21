@@ -98,23 +98,23 @@ function statusClasses(status: IssueThreadInteraction["status"]) {
     case "accepted":
     case "answered":
       return {
-        shell: "border-emerald-300/70 bg-[linear-gradient(145deg,rgba(16,185,129,0.14),rgba(255,255,255,0.96)_42%,rgba(6,182,212,0.08))]",
+        shell: "border-emerald-300/80 bg-card",
         badge: "border-emerald-400/60 bg-emerald-100/80 text-emerald-950",
       };
     case "rejected":
       return {
-        shell: "border-rose-300/70 bg-[linear-gradient(145deg,rgba(244,63,94,0.12),rgba(255,255,255,0.96)_42%,rgba(251,191,36,0.08))]",
+        shell: "border-rose-300/80 bg-card",
         badge: "border-rose-400/60 bg-rose-100/85 text-rose-950",
       };
     case "failed":
     case "expired":
       return {
-        shell: "border-amber-300/70 bg-[linear-gradient(145deg,rgba(245,158,11,0.14),rgba(255,255,255,0.96)_42%,rgba(148,163,184,0.08))]",
+        shell: "border-amber-300/80 bg-card",
         badge: "border-amber-400/60 bg-amber-100/85 text-amber-950",
       };
     default:
       return {
-        shell: "border-sky-300/70 bg-[linear-gradient(145deg,rgba(14,165,233,0.10),rgba(255,255,255,0.96)_42%,rgba(250,204,21,0.08))]",
+        shell: "border-sky-300/80 bg-card",
         badge: "border-sky-400/60 bg-sky-100/85 text-sky-950",
       };
   }
@@ -134,7 +134,7 @@ function TaskField({
       className={cn(
         "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em]",
         tone === "default"
-          ? "border-border/70 bg-background/80 text-foreground/75"
+          ? "border-border/70 bg-background/80 text-foreground"
           : "border-border/60 bg-background/60 text-muted-foreground",
       )}
     >
@@ -193,11 +193,17 @@ function TaskTreeNode({
   );
 
   return (
-    <div className="space-y-3">
+    <div className={cn("space-y-3", depth > 0 && "relative pl-5")}>
+      {depth > 0 ? (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-0 h-full w-px bg-border"
+        />
+      ) : null}
       <div
         className={cn(
           "rounded-2xl border border-border/70 bg-background/80 p-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]",
-          depth > 0 && "ml-4 border-dashed shadow-none",
+          depth > 0 && "relative border-dashed shadow-none before:absolute before:-left-5 before:top-7 before:h-px before:w-5 before:bg-border",
         )}
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -215,8 +221,15 @@ function TaskTreeNode({
                 <Sparkles className="h-3.5 w-3.5" />
               </span>
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-foreground">
-                  {node.task.title}
+                <div className="flex flex-wrap items-center gap-2">
+                  {depth > 0 ? (
+                    <span className="rounded-full border border-border/70 bg-muted/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                      Child task
+                    </span>
+                  ) : null}
+                  <div className="text-sm font-medium text-foreground">
+                    {node.task.title}
+                  </div>
                 </div>
                 {node.task.description ? (
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">
@@ -273,7 +286,7 @@ function TaskTreeNode({
       </div>
 
       {visibleChildren.length > 0 ? (
-        <div className="space-y-3 border-l border-dashed border-border/70 pl-4">
+        <div className="space-y-3">
           {visibleChildren.map((child) => (
             <TaskTreeNode
               key={child.task.clientKey}
@@ -454,12 +467,17 @@ function SuggestTasksCard({
         </div>
       ) : null}
 
-      {interaction.status === "rejected" && interaction.result?.rejectionReason ? (
+      {interaction.status === "rejected" ? (
         <div className="rounded-2xl border border-rose-300/60 bg-rose-50/85 px-4 py-3 text-sm text-rose-950">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-700">
             Rejection reason
           </div>
-          <p className="mt-1 leading-6">{interaction.result.rejectionReason}</p>
+          <p className={cn(
+            "mt-1 leading-6",
+            !interaction.result?.rejectionReason && "text-rose-900/75",
+          )}>
+            {interaction.result?.rejectionReason || "No reason provided."}
+          </p>
         </div>
       ) : null}
 
@@ -547,25 +565,32 @@ function SuggestTasksCard({
 }
 
 function QuestionOptionButton({
+  id,
   label,
   description,
   selected,
+  selectionMode,
   onClick,
 }: {
+  id: string;
   label: string;
   description?: string | null;
   selected: boolean;
+  selectionMode: "single" | "multi";
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
+      role={selectionMode === "single" ? "radio" : "checkbox"}
+      aria-checked={selected}
       className={cn(
-        "w-full rounded-2xl border px-4 py-3 text-left transition-colors",
+        "w-full rounded-2xl border px-4 py-3 text-left transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
         selected
           ? "border-sky-400/70 bg-sky-50/90 shadow-[0_14px_36px_rgba(14,165,233,0.14)]"
           : "border-border/70 bg-background/80 hover:border-sky-300/60 hover:bg-sky-50/60",
       )}
+      id={id}
       onClick={onClick}
     >
       <div className="text-sm font-medium text-foreground">{label}</div>
@@ -670,7 +695,10 @@ function AskUserQuestionsCard({
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     Question {index + 1}
                   </div>
-                  <div className="mt-1 text-sm font-semibold text-foreground">
+                  <div
+                    id={`${interaction.id}-${question.id}-prompt`}
+                    className="mt-1 text-sm font-semibold text-foreground"
+                  >
                     {question.prompt}
                   </div>
                   {question.helpText ? (
@@ -686,13 +714,19 @@ function AskUserQuestionsCard({
                 />
               </div>
 
-              <div className="mt-3 grid gap-3">
+              <div
+                className="mt-3 grid gap-3"
+                role={question.selectionMode === "single" ? "radiogroup" : "group"}
+                aria-labelledby={`${interaction.id}-${question.id}-prompt`}
+              >
                 {question.options.map((option) => (
                   <QuestionOptionButton
                     key={option.id}
+                    id={`${interaction.id}-${question.id}-${option.id}`}
                     label={option.label}
                     description={option.description}
                     selected={(draftAnswers[question.id] ?? []).includes(option.id)}
+                    selectionMode={question.selectionMode}
                     onClick={() =>
                       toggleOption(question.id, option.id, question.selectionMode)}
                   />
@@ -795,7 +829,7 @@ export function IssueThreadInteractionCard({
   return (
     <div className={cn("rounded-[28px] border p-5 shadow-[0_28px_70px_rgba(15,23,42,0.10)]", styles.shell)}>
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-64">
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]", styles.badge)}>
               <StatusIcon className="h-3.5 w-3.5" />
@@ -809,7 +843,7 @@ export function IssueThreadInteractionCard({
             ) : null}
           </div>
 
-          <div className="mt-3 text-lg font-semibold text-foreground">
+          <div className="mt-3 text-lg font-bold text-foreground">
             {interaction.title
               ?? (interaction.kind === "suggest_tasks"
                 ? "Suggested task tree"
@@ -825,7 +859,7 @@ export function IssueThreadInteractionCard({
         <Tooltip>
           <TooltipTrigger asChild>
             <div className="rounded-2xl border border-border/70 bg-background/80 px-3 py-2 text-right text-xs text-muted-foreground">
-              <div className="font-medium text-foreground/80">{formatShortDate(interaction.createdAt)}</div>
+              <div className="font-medium text-foreground">{formatShortDate(interaction.createdAt)}</div>
               <div>proposed by {createdByLabel}</div>
             </div>
           </TooltipTrigger>
@@ -855,7 +889,7 @@ export function IssueThreadInteractionCard({
 
       {resolvedByLabel ? (
         <div className="mt-4 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-          Resolved by <span className="font-medium text-foreground/80">{resolvedByLabel}</span>
+          Resolved by <span className="font-medium text-foreground">{resolvedByLabel}</span>
           {interaction.resolvedAt ? ` on ${formatShortDate(interaction.resolvedAt)}` : ""}
         </div>
       ) : null}
