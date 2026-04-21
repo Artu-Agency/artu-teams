@@ -53,6 +53,8 @@ self.fetch = _undefined;
 self.XMLHttpRequest = _undefined;
 self.WebSocket = _undefined;
 self.EventSource = _undefined;
+self.RTCPeerConnection = _undefined;
+self.RTCDataChannel = _undefined;
 self.Request = _undefined;
 self.Response = _undefined;
 self.Headers = _undefined;
@@ -112,7 +114,7 @@ self.onmessage = function (e) {
       const factory = new Function(
         "exports", "module", "self", "globalThis",
         // Wrap in a block to prevent hoisted declarations from leaking.
-        "{\\n" + msg.source + "\\n}"
+        "\\"use strict\\";\\n{\\n" + msg.source + "\\n}"
       );
       factory(exports, module, _undefined, _undefined);
 
@@ -211,7 +213,7 @@ export function createSandboxedWorker(): Worker {
   try {
     return new Worker(url);
   } finally {
-    // Revoke immediately — the Worker has already loaded the source.
+    // Revoke after construction; the Worker has already captured the Blob URL source.
     URL.revokeObjectURL(url);
   }
 }
