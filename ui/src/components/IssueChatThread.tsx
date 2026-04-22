@@ -2693,6 +2693,12 @@ export function IssueChatThread({
                   return <IssueChatSystemMessage key={message.id} message={message} />;
                 })
               )}
+              {showComposer ? (
+                <div data-testid="issue-chat-thread-notices" className="space-y-2">
+                  <IssueBlockedNotice issueStatus={issueStatus} blockers={unresolvedBlockers} />
+                  <IssueAssigneePausedNotice agent={assignedAgent} />
+                </div>
+              ) : null}
               <div ref={bottomAnchorRef} />
               {showComposer ? (
                 <div
@@ -2711,8 +2717,6 @@ export function IssueChatThread({
             data-testid="issue-chat-composer-dock"
             className="sticky bottom-[calc(env(safe-area-inset-bottom)+20px)] z-20 space-y-2 bg-gradient-to-t from-background via-background/95 to-background/0 pt-6"
           >
-            <IssueBlockedNotice issueStatus={issueStatus} blockers={unresolvedBlockers} />
-            <IssueAssigneePausedNotice agent={assignedAgent} />
             <IssueChatComposer
               ref={composerRef}
               onImageUpload={imageUploadHandler}
