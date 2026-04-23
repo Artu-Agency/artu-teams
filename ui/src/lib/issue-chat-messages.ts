@@ -43,6 +43,7 @@ export interface IssueChatLinkedRun {
   startedAt: Date | string | null;
   finishedAt?: Date | string | null;
   hasStoredOutput?: boolean;
+  logBytes?: number | null;
 }
 
 export interface IssueChatTranscriptEntry {

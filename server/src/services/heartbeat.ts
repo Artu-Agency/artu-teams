@@ -689,6 +689,7 @@ const heartbeatRunIssueSummaryColumns = {
   finishedAt: heartbeatRuns.finishedAt,
   createdAt: heartbeatRuns.createdAt,
   agentId: heartbeatRuns.agentId,
+  logBytes: heartbeatRuns.logBytes,
   processStartedAt: heartbeatRuns.processStartedAt,
   livenessState: heartbeatRuns.livenessState,
   livenessReason: heartbeatRuns.livenessReason,

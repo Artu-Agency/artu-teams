@@ -2221,6 +2221,8 @@ export function IssueChatThread({
         agentId: activeRun.agentId,
         agentName: activeRun.agentName,
         adapterType: activeRun.adapterType,
+        logBytes: activeRun.logBytes,
+        lastOutputBytes: activeRun.lastOutputBytes,
       });
     }
     return [...deduped.values()].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
