@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { environmentLeases, environments } from "@paperclipai/db";
 import {
@@ -162,7 +162,10 @@ export function environmentService(db: Db) {
           updatedAt: now,
         })
         .returning()
-        .then((rows) => rows[0]);
+        .then((rows) => rows[0] ?? null);
+      if (!row) {
+        throw new Error("Failed to create environment");
+      }
       return toEnvironment(row);
     },
 
@@ -238,7 +241,10 @@ export function environmentService(db: Db) {
           updatedAt: now,
         })
         .returning()
-        .then((rows) => rows[0]);
+        .then((rows) => rows[0] ?? null);
+      if (!row) {
+        throw new Error("Failed to acquire environment lease");
+      }
       return toEnvironmentLease(row);
     },
 
@@ -300,7 +306,7 @@ export function environmentService(db: Db) {
         .where(
           and(
             eq(environmentLeases.heartbeatRunId, heartbeatRunId),
-            inArray(environmentLeases.status, ["active"]),
+            eq(environmentLeases.status, "active"),
           ),
         )
         .returning();

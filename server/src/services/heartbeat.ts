@@ -3004,13 +3004,14 @@ export function heartbeatService(db: Db) {
     return retryRun;
   }
 
-  async function hasDeferredIssueCommentWake(companyId: string, issueId: string) {
+  async function hasDeferredIssueCommentWake(companyId: string, issueId: string, agentId: string) {
     const deferredPayloads = await db
       .select({ payload: agentWakeupRequests.payload })
       .from(agentWakeupRequests)
       .where(
         and(
           eq(agentWakeupRequests.companyId, companyId),
+          eq(agentWakeupRequests.agentId, agentId),
           eq(agentWakeupRequests.status, "deferred_issue_execution"),
           sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
         ),
@@ -3075,7 +3076,7 @@ export function heartbeatService(db: Db) {
       return { outcome: "not_applicable" as const, queuedRun: null };
     }
 
-    if (await hasDeferredIssueCommentWake(run.companyId, issueId)) {
+    if (await hasDeferredIssueCommentWake(run.companyId, issueId, run.agentId)) {
       await patchRunIssueCommentStatus(run.id, {
         issueCommentStatus: "not_applicable",
         issueCommentSatisfiedByCommentId: null,
