@@ -5597,15 +5597,7 @@ export function heartbeatService(db: Db) {
       }
 
       let issue = await tx
-        .select({
-          id: issues.id,
-          companyId: issues.companyId,
-          identifier: issues.identifier,
-          status: issues.status,
-          assigneeAgentId: issues.assigneeAgentId,
-          assigneeUserId: issues.assigneeUserId,
-          executionRunId: issues.executionRunId,
-        })
+        .select()
         .from(issues)
         .where(
           and(
@@ -5862,17 +5854,9 @@ export function heartbeatService(db: Db) {
           status: issue.status as "todo" | "in_progress",
           latestRun: run,
         });
-        await tx
-          .update(issues)
-          .set({
-            status: "blocked",
-            updatedAt: new Date(),
-          })
-          .where(eq(issues.id, issue.id));
         return {
           kind: "blocked" as const,
-          issueId: issue.id,
-          issueIdentifier: issue.identifier,
+          issue,
           previousStatus: issue.status,
           comment,
         };
@@ -5952,25 +5936,11 @@ export function heartbeatService(db: Db) {
     });
 
     if (promotionResult?.kind === "blocked") {
-      await issuesSvc.addComment(promotionResult.issueId, promotionResult.comment, {});
-      await logActivity(db, {
-        companyId: run.companyId,
-        actorType: "system",
-        actorId: "system",
-        agentId: null,
-        runId: run.id,
-        action: "issue.updated",
-        entityType: "issue",
-        entityId: promotionResult.issueId,
-        details: {
-          identifier: promotionResult.issueIdentifier,
-          status: "blocked",
-          previousStatus: promotionResult.previousStatus,
-          source: "heartbeat.release_issue_execution_and_promote",
-          latestRunId: run.id,
-          latestRunStatus: run.status,
-          latestRunErrorCode: run.errorCode ?? null,
-        },
+      await recovery.escalateStrandedAssignedIssue({
+        issue: promotionResult.issue,
+        previousStatus: promotionResult.previousStatus as "todo" | "in_progress",
+        latestRun: run,
+        comment: promotionResult.comment,
       });
       return;
     }

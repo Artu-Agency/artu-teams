@@ -800,10 +800,27 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   it("blocks the issue when process-loss retry is exhausted and the immediate continuation recovery also fails", async () => {
     mockAdapterExecute.mockRejectedValueOnce(new Error("continuation recovery failed"));
 
-    const { agentId, runId, issueId } = await seedRunFixture({
+    const { companyId, agentId, runId, issueId } = await seedRunFixture({
       agentStatus: "idle",
       processPid: 999_999_999,
       processLossRetryCount: 1,
+    });
+    const resolvedBlockerId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    await db.insert(issues).values({
+      id: resolvedBlockerId,
+      companyId,
+      title: "Already completed prerequisite",
+      status: "done",
+      priority: "medium",
+      issueNumber: 2,
+      identifier: `${issuePrefix}-2`,
+    });
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId: resolvedBlockerId,
+      relatedIssueId: issueId,
+      type: "blocks",
     });
     const heartbeat = heartbeatService(db);
 
@@ -831,7 +848,29 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     );
     expect(blockedIssue?.status).toBe("blocked");
     expect(blockedIssue?.executionRunId).toBeNull();
-    expect(blockedIssue?.checkoutRunId).toBe(continuationRun?.id ?? null);
+    expect(blockedIssue?.checkoutRunId).toBeNull();
+    if (!continuationRun?.id) throw new Error("Expected continuation recovery run to exist");
+
+    const recovery = await expectStrandedRecoveryArtifacts({
+      companyId,
+      agentId,
+      issueId,
+      runId: continuationRun.id,
+      previousStatus: "in_progress",
+      retryReason: "issue_continuation_needed",
+    });
+
+    const blockerRelations = await db
+      .select()
+      .from(issueRelations)
+      .where(
+        and(
+          eq(issueRelations.companyId, companyId),
+          eq(issueRelations.relatedIssueId, issueId),
+          eq(issueRelations.type, "blocks"),
+        ),
+      );
+    expect(blockerRelations.map((relation) => relation.issueId)).toEqual([recovery.id]);
 
     const comments = await waitForValue(async () => {
       const rows = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
@@ -839,6 +878,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     });
     expect(comments).toHaveLength(1);
     expect(comments[0]?.body).toContain("retried continuation");
+    expect(comments[0]?.body).toContain(`Recovery issue: [${recovery.identifier}]`);
   });
 
   it("schedules a bounded retry for codex transient upstream failures instead of blocking the issue immediately", async () => {

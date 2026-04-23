@@ -1304,6 +1304,28 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       .then((rows) => rows.map((row) => row.blockerIssueId));
   }
 
+  async function existingUnresolvedBlockerIssueIds(companyId: string, issueId: string) {
+    return db
+      .select({ blockerIssueId: issueRelations.issueId })
+      .from(issueRelations)
+      .innerJoin(
+        issues,
+        and(
+          eq(issues.companyId, issueRelations.companyId),
+          eq(issues.id, issueRelations.issueId),
+        ),
+      )
+      .where(
+        and(
+          eq(issueRelations.companyId, companyId),
+          eq(issueRelations.relatedIssueId, issueId),
+          eq(issueRelations.type, "blocks"),
+          notInArray(issues.status, ["done", "cancelled"]),
+        ),
+      )
+      .then((rows) => rows.map((row) => row.blockerIssueId));
+  }
+
   async function escalateStrandedAssignedIssue(input: {
     issue: typeof issues.$inferSelect;
     previousStatus: "todo" | "in_progress";
@@ -1315,7 +1337,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       previousStatus: input.previousStatus,
       latestRun: input.latestRun,
     });
-    const blockerIds = await existingBlockerIssueIds(input.issue.companyId, input.issue.id);
+    const blockerIds = await existingUnresolvedBlockerIssueIds(input.issue.companyId, input.issue.id);
     const nextBlockerIds = recoveryIssue
       ? [...new Set([...blockerIds, recoveryIssue.id])]
       : blockerIds;
@@ -1332,7 +1354,11 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         `- Recovery issue: ${issueUiLink({ identifier: recoveryIssue.identifier, id: recoveryIssue.id }, prefix)}`,
         "- Next action: the recovery owner should either restore a live execution path or record the manual resolution, then mark the recovery issue done.",
       ].join("\n")
-      : "";
+      : [
+        "",
+        "- Recovery issue: none created because Paperclip could not find an invokable manager, creator, or executive owner with budget available.",
+        "- Next action: a board operator should assign an invokable recovery owner, fix the agent/runtime state, or record an intentional manual resolution.",
+      ].join("\n");
 
     await issuesSvc.addComment(input.issue.id, `${input.comment}${recoveryLine}`, {});
 
@@ -2085,6 +2111,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
 
   return {
     buildRunOutputSilence,
+    escalateStrandedAssignedIssue,
     recordWatchdogDecision,
     scanSilentActiveRuns,
     reconcileStrandedAssignedIssues,
