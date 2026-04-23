@@ -4,6 +4,10 @@
 
 Redesign the Dashboard tab of the Agent Profile page to give users clearer hierarchy and more efficient information parsing. This is Run A of a two-path experiment — Claude Code path. Run B (Paperclip agent teams) runs from this same brief and rubric.
 
+## Operating principles
+
+Both runs work from a shared set of UX operating principles documented in [`./operating-principles.md`](./operating-principles.md). These cover role definition, design lenses (cognition, Gestalt, usability heuristics, accessibility, etc.), the visual quality bar, the "reach for what exists first" DS discipline, and general working rules. Both runs apply these principles to the work; path-specific operational mechanics (how each path coordinates, reports, or executes internally) live outside the shared baseline.
+
 ## Current state
 
 The Dashboard tab is rendered by `AgentOverview` (lines 1259–1335) and its inline helpers `LatestRunCard` (1170–1255) and `CostsSection` (1339–1413) inside `ui/src/pages/AgentDetail.tsx`. Effective footprint is ~245 lines across three inline functions.
