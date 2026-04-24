@@ -139,7 +139,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
 
 async function flush() {
   await act(async () => {
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
