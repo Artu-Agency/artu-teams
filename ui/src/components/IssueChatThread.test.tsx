@@ -875,7 +875,7 @@ describe("IssueChatThread", () => {
     });
 
     expect(container.querySelector('[data-testid="issue-chat-composer-drop-overlay"]')).not.toBeNull();
-    expect(container.textContent).toContain("Drop files to attach");
+    expect(container.textContent).toContain("Drop to upload");
     expect(container.textContent).toContain("Images insert into the reply");
     expect(container.textContent).toContain("Other files are added to this issue");
     expect(composer?.className).toContain("border-primary/45");
