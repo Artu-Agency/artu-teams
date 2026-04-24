@@ -438,7 +438,14 @@ export function IssueRunLedgerContent({
       ) : null}
 
       {latestSilentRun?.outputSilence ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+        <div
+          className={cn(
+            "rounded-md border px-3 py-2 text-xs",
+            latestSilentRun.outputSilence.level === "critical"
+              ? "border-red-500/30 bg-red-500/10 text-red-900 dark:text-red-200"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+          )}
+        >
           <p className="font-medium">
             {latestSilentRun.outputSilence.level === "critical"
               ? "Stale-run watchdog alert"

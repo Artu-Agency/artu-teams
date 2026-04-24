@@ -347,6 +347,11 @@ describe("IssueRunLedger", () => {
     expect(container.textContent).toContain("Stale-run watchdog alert");
     expect(container.textContent).toContain("PAP-404");
     expect(container.textContent).toContain("Stale run");
+    const watchdogBanner = Array.from(container.querySelectorAll("p"))
+      .find((node) => node.textContent?.includes("Stale-run watchdog alert"))
+      ?.closest("div");
+    expect(watchdogBanner?.className).toContain("border-red-500/30");
+    expect(watchdogBanner?.className).toContain("bg-red-500/10");
 
     const continueButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("Continue monitoring"),
