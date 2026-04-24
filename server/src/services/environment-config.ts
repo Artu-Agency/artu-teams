@@ -287,7 +287,9 @@ export async function normalizeEnvironmentConfigForPersistence(input: {
     }
     const sandboxConfig = parsed.data;
     if (sandboxConfig.provider === "fake") {
-      return { ...(sandboxConfig as FakeSandboxEnvironmentConfig) };
+      throw unprocessable(
+        "Built-in fake sandbox environments are reserved for internal probes and cannot be saved.",
+      );
     }
     return { ...(sandboxConfig as PluginSandboxEnvironmentConfig) };
   }

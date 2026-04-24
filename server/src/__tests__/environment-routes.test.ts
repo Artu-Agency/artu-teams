@@ -494,19 +494,7 @@ describe("environment routes", () => {
     );
   });
 
-  it("creates a sandbox environment with normalized fake-provider config", async () => {
-    const environment = {
-      ...createEnvironment(),
-      id: "env-sandbox",
-      name: "Fake Sandbox",
-      driver: "sandbox" as const,
-      config: {
-        provider: "fake",
-        image: "ubuntu:24.04",
-        reuseLease: false,
-      },
-    };
-    mockEnvironmentService.create.mockResolvedValue(environment);
+  it("rejects persisted fake sandbox environments", async () => {
     const app = createApp({
       type: "board",
       userId: "user-1",
@@ -524,17 +512,9 @@ describe("environment routes", () => {
         },
       });
 
-    expect(res.status).toBe(201);
-    expect(mockEnvironmentService.create).toHaveBeenCalledWith("company-1", {
-      name: "Fake Sandbox",
-      driver: "sandbox",
-      status: "active",
-      config: {
-        provider: "fake",
-        image: "ubuntu:24.04",
-        reuseLease: false,
-      },
-    });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("reserved for internal probes");
+    expect(mockEnvironmentService.create).not.toHaveBeenCalled();
   });
 
   it("creates a sandbox environment with normalized Fake plugin config", async () => {
@@ -858,6 +838,29 @@ describe("environment routes", () => {
 
     expect(res.status).toBe(422);
     expect(res.body.error).toContain("host");
+    expect(mockEnvironmentService.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects switching an environment to the built-in fake sandbox provider", async () => {
+    mockEnvironmentService.getById.mockResolvedValue(createEnvironment());
+    const app = createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    });
+
+    const res = await request(app)
+      .patch("/api/environments/env-1")
+      .send({
+        driver: "sandbox",
+        config: {
+          provider: "fake",
+          image: "ubuntu:24.04",
+        },
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("reserved for internal probes");
     expect(mockEnvironmentService.update).not.toHaveBeenCalled();
   });
 

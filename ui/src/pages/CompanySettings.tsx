@@ -80,11 +80,9 @@ function buildEnvironmentPayload(form: EnvironmentFormState) {
           }
         : form.driver === "sandbox"
           ? {
-              provider: form.sandboxProvider.trim() || "fake",
+              provider: form.sandboxProvider.trim(),
               image: form.sandboxImage.trim() || "ubuntu:24.04",
-              ...(form.sandboxProvider === "fake"
-                ? {}
-                : { timeoutMs: Number.parseInt(form.sandboxTimeoutMs || "300000", 10) || 300000 }),
+              timeoutMs: Number.parseInt(form.sandboxTimeoutMs || "300000", 10) || 300000,
               reuseLease: form.sandboxReuseLease,
             }
           : {},
@@ -104,7 +102,7 @@ function createEmptyEnvironmentForm(): EnvironmentFormState {
     sshPrivateKeySecretId: "",
     sshKnownHosts: "",
     sshStrictHostKeyChecking: true,
-    sandboxProvider: "fake",
+    sandboxProvider: "",
     sandboxImage: "ubuntu:24.04",
     sandboxTemplate: "base",
     sandboxApiKey: "",
@@ -557,7 +555,10 @@ export function CompanySettings() {
       displayName: capability.displayName || provider,
     }))
     .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  const sandboxCreationEnabled = discoveredPluginSandboxProviders.length > 0;
+  const sandboxSupportVisible = sandboxCreationEnabled;
   const pluginSandboxProviders =
+    environmentForm.sandboxProvider.trim().length > 0 &&
     environmentForm.sandboxProvider !== "fake" &&
     !discoveredPluginSandboxProviders.some((provider) => provider.provider === environmentForm.sandboxProvider)
       ? [
@@ -565,6 +566,21 @@ export function CompanySettings() {
           { provider: environmentForm.sandboxProvider, displayName: environmentForm.sandboxProvider },
         ]
       : discoveredPluginSandboxProviders;
+
+  useEffect(() => {
+    if (environmentForm.driver !== "sandbox") return;
+    if (environmentForm.sandboxProvider.trim().length > 0 && environmentForm.sandboxProvider !== "fake") return;
+    const firstProvider = discoveredPluginSandboxProviders[0]?.provider;
+    if (!firstProvider) return;
+    setEnvironmentForm((current) => (
+      current.driver !== "sandbox" || (current.sandboxProvider.trim().length > 0 && current.sandboxProvider !== "fake")
+        ? current
+        : {
+            ...current,
+            sandboxProvider: firstProvider,
+          }
+    ));
+  }, [discoveredPluginSandboxProviders, environmentForm.driver, environmentForm.sandboxProvider]);
 
   const environmentFormValid =
     environmentForm.name.trim().length > 0 &&
@@ -576,15 +592,11 @@ export function CompanySettings() {
       )) &&
     (environmentForm.driver !== "sandbox" ||
       environmentForm.sandboxProvider.trim().length > 0 &&
+      environmentForm.sandboxProvider !== "fake" &&
       environmentForm.sandboxImage.trim().length > 0 &&
-      (
-        environmentForm.sandboxProvider === "fake" ||
-        (
-          environmentForm.sandboxTimeoutMs.trim().length > 0 &&
-          Number.isFinite(Number(environmentForm.sandboxTimeoutMs)) &&
-          Number(environmentForm.sandboxTimeoutMs) > 0
-        )
-      ));
+      environmentForm.sandboxTimeoutMs.trim().length > 0 &&
+      Number.isFinite(Number(environmentForm.sandboxTimeoutMs)) &&
+      Number(environmentForm.sandboxTimeoutMs) > 0);
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -749,8 +761,9 @@ export function CompanySettings() {
         </div>
         <div className="space-y-4 rounded-md border border-border px-4 py-4">
           <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            Environment choices use the same adapter support matrix as agent defaults. SSH and plugin-backed sandbox
-            environments are available for remote-managed adapters; fake sandbox remains a fixture for provider probes.
+            Environment choices use the same adapter support matrix as agent defaults. SSH is always available for
+            remote-managed adapters, and sandbox environments appear only when a run-capable sandbox provider plugin is
+            installed.
           </div>
 
           <div className="overflow-x-auto">
@@ -761,7 +774,9 @@ export function CompanySettings() {
                   <th className="py-2 pr-3 font-medium">Adapter</th>
                   <th className="px-3 py-2 font-medium">Local</th>
                   <th className="px-3 py-2 font-medium">SSH</th>
-                  <th className="px-3 py-2 font-medium">Fake sandbox</th>
+                  {sandboxSupportVisible ? (
+                    <th className="px-3 py-2 font-medium">Sandbox</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -779,9 +794,14 @@ export function CompanySettings() {
                     <td className="px-3 py-2">
                       <SupportMark supported={support.drivers.ssh === "supported"} />
                     </td>
-                    <td className="px-3 py-2">
-                      <SupportMark supported={support.sandboxProviders.fake === "supported"} />
-                    </td>
+                    {sandboxSupportVisible ? (
+                      <td className="px-3 py-2">
+                        <SupportMark
+                          supported={discoveredPluginSandboxProviders.some((provider) =>
+                            support.sandboxProviders[provider.provider] === "supported")}
+                        />
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -889,13 +909,17 @@ export function CompanySettings() {
                   onChange={(e) => setEnvironmentForm((current) => ({ ...current, description: e.target.value }))}
                 />
               </Field>
-              <Field label="Driver" hint="Local runs on this host. SSH stores a remote machine target. Sandbox stores deterministic fake-provider or plugin provider config on the shared environment seam.">
+              <Field label="Driver" hint="Local runs on this host. SSH stores a remote machine target. Sandbox stores plugin-backed provider config on the shared environment seam.">
                 <select
                   className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
                   value={environmentForm.driver}
                   onChange={(e) =>
                     setEnvironmentForm((current) => ({
                       ...current,
+                      sandboxProvider:
+                        e.target.value === "sandbox"
+                          ? current.sandboxProvider.trim() || discoveredPluginSandboxProviders[0]?.provider || ""
+                          : current.sandboxProvider,
                       driver:
                         e.target.value === "local"
                           ? "local"
@@ -905,7 +929,9 @@ export function CompanySettings() {
                     }))}
                 >
                   <option value="ssh">SSH</option>
-                  <option value="sandbox">Sandbox</option>
+                  {sandboxCreationEnabled || environmentForm.driver === "sandbox" ? (
+                    <option value="sandbox">Sandbox</option>
+                  ) : null}
                   <option value="local">Local</option>
                 </select>
               </Field>
@@ -994,7 +1020,7 @@ export function CompanySettings() {
 
               {environmentForm.driver === "sandbox" ? (
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="Provider" hint="Fake is the deterministic test provider. Installed sandbox-provider plugins appear here.">
+                  <Field label="Provider" hint="Installed run-capable sandbox provider plugins appear here.">
                     <select
                       className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
                       value={environmentForm.sandboxProvider}
@@ -1004,7 +1030,6 @@ export function CompanySettings() {
                           sandboxProvider: e.target.value,
                         }))}
                     >
-                      <option value="fake">Fake</option>
                       {pluginSandboxProviders.map((provider) => (
                         <option key={provider.provider} value={provider.provider}>
                           {provider.displayName}
@@ -1012,7 +1037,7 @@ export function CompanySettings() {
                       ))}
                     </select>
                   </Field>
-                  <Field label="Image" hint="Operator-facing sandbox image label used by the fake provider fixture and fake plugin.">
+                  <Field label="Image" hint="Operator-facing sandbox image label passed through to the selected provider plugin.">
                     <input
                       className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
                       type="text"
@@ -1021,18 +1046,16 @@ export function CompanySettings() {
                       onChange={(e) => setEnvironmentForm((current) => ({ ...current, sandboxImage: e.target.value }))}
                     />
                   </Field>
-                  {environmentForm.sandboxProvider !== "fake" ? (
-                    <Field label="Timeout (ms)" hint="Command timeout passed to the sandbox provider plugin.">
-                      <input
-                        className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-                        type="number"
-                        min={1}
-                        value={environmentForm.sandboxTimeoutMs}
-                        onChange={(e) =>
-                          setEnvironmentForm((current) => ({ ...current, sandboxTimeoutMs: e.target.value }))}
-                      />
-                    </Field>
-                  ) : null}
+                  <Field label="Timeout (ms)" hint="Command timeout passed to the sandbox provider plugin.">
+                    <input
+                      className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+                      type="number"
+                      min={1}
+                      value={environmentForm.sandboxTimeoutMs}
+                      onChange={(e) =>
+                        setEnvironmentForm((current) => ({ ...current, sandboxTimeoutMs: e.target.value }))}
+                    />
+                  </Field>
                   <div className="md:col-span-2">
                     <ToggleField
                       label="Reuse lease"
