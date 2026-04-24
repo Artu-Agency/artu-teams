@@ -17,6 +17,8 @@ import {
   issueComments,
   issueDocuments,
   issueRelations,
+  issueTreeHoldMembers,
+  issueTreeHolds,
   issues,
 } from "@paperclipai/db";
 import {
@@ -309,6 +311,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(documentRevisions);
     await db.delete(documents);
     await db.delete(issueRelations);
+    await db.delete(issueTreeHoldMembers);
+    await db.delete(issueTreeHolds);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await db.delete(issueComments);
       await db.delete(issueDocuments);
@@ -445,11 +449,13 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     runStatus: "failed" | "timed_out" | "cancelled" | "succeeded";
     retryReason?: "assignment_recovery" | "issue_continuation_needed" | null;
     assignToUser?: boolean;
+    activePauseHold?: boolean;
   }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const runId = randomUUID();
     const wakeupRequestId = randomUUID();
+    const rootIssueId = randomUUID();
     const issueId = randomUUID();
     const now = new Date("2026-03-19T00:00:00.000Z");
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
@@ -511,22 +517,47 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       error: input.runStatus === "succeeded" ? null : "run failed before issue advanced",
     });
 
-    await db.insert(issues).values({
-      id: issueId,
-      companyId,
-      title: "Recover stranded assigned work",
-      status: input.status,
-      priority: "medium",
-      assigneeAgentId: input.assignToUser ? null : agentId,
-      assigneeUserId: input.assignToUser ? "user-1" : null,
-      checkoutRunId: input.status === "in_progress" ? runId : null,
-      executionRunId: null,
-      issueNumber: 1,
-      identifier: `${issuePrefix}-1`,
-      startedAt: input.status === "in_progress" ? now : null,
-    });
+    await db.insert(issues).values([
+      ...(input.activePauseHold
+        ? [{
+          id: rootIssueId,
+          companyId,
+          title: "Paused recovery root",
+          status: "todo",
+          priority: "medium",
+          issueNumber: 1,
+          identifier: `${issuePrefix}-1`,
+        }]
+        : []),
+      {
+        id: issueId,
+        companyId,
+        parentId: input.activePauseHold ? rootIssueId : null,
+        title: "Recover stranded assigned work",
+        status: input.status,
+        priority: "medium",
+        assigneeAgentId: input.assignToUser ? null : agentId,
+        assigneeUserId: input.assignToUser ? "user-1" : null,
+        checkoutRunId: input.status === "in_progress" ? runId : null,
+        executionRunId: null,
+        issueNumber: input.activePauseHold ? 2 : 1,
+        identifier: `${issuePrefix}-${input.activePauseHold ? 2 : 1}`,
+        startedAt: input.status === "in_progress" ? now : null,
+      },
+    ]);
 
-    return { companyId, agentId, runId, wakeupRequestId, issueId };
+    if (input.activePauseHold) {
+      await db.insert(issueTreeHolds).values({
+        companyId,
+        rootIssueId,
+        mode: "pause",
+        status: "active",
+        reason: "pause recovery subtree",
+        releasePolicy: { strategy: "manual" },
+      });
+    }
+
+    return { companyId, agentId, runId, wakeupRequestId, issueId, rootIssueId };
   }
 
   async function expectStrandedRecoveryArtifacts(input: {
@@ -1357,6 +1388,51 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(comments[0]?.body).toContain("retried continuation");
     expect(comments[0]?.body).toContain("Latest retry failure: `process_lost` - run failed before issue advanced.");
     expect(comments[0]?.body).toContain(`Recovery issue: [${recovery.identifier}]`);
+  });
+
+  it("does not escalate paused-tree recovery when the automatic continuation retry was cancelled by the hold", async () => {
+    const { companyId, agentId, issueId } = await seedStrandedIssueFixture({
+      status: "in_progress",
+      runStatus: "cancelled",
+      retryReason: "issue_continuation_needed",
+      activePauseHold: true,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+    expect(result.dispatchRequeued).toBe(0);
+    expect(result.continuationRequeued).toBe(0);
+    expect(result.escalated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.issueIds).toEqual([]);
+
+    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+    expect(issue?.status).toBe("in_progress");
+    expect(issue?.checkoutRunId).toBeTruthy();
+
+    const recoveryIssues = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery")));
+    expect(recoveryIssues).toHaveLength(0);
+
+    const blockerRelations = await db
+      .select()
+      .from(issueRelations)
+      .where(
+        and(
+          eq(issueRelations.companyId, companyId),
+          eq(issueRelations.relatedIssueId, issueId),
+          eq(issueRelations.type, "blocks"),
+        ),
+      );
+    expect(blockerRelations).toHaveLength(0);
+
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
+    expect(comments).toHaveLength(0);
+
+    const wakeups = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, agentId));
+    expect(wakeups).toHaveLength(1);
   });
 
   it("re-enqueues continuation when the latest automatic continuation succeeded without closing the issue", async () => {
