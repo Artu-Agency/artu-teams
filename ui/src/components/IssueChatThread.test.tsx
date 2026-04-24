@@ -940,6 +940,104 @@ describe("IssueChatThread", () => {
     });
   });
 
+  it("shows only the outer composer drop overlay when dragging over the reply editor", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={async () => {}}
+            imageUploadHandler={async () => "/api/attachments/image/content"}
+            onAttachImage={async () => undefined}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const composer = container.querySelector('[data-testid="issue-chat-composer"]') as HTMLDivElement | null;
+    const editor = container.querySelector('textarea[aria-label="Issue chat editor"]') as HTMLTextAreaElement | null;
+    expect(composer).not.toBeNull();
+    expect(editor).not.toBeNull();
+
+    act(() => {
+      editor?.dispatchEvent(createFileDragEvent("dragenter", [
+        new File(["hello"], "notes.txt", { type: "text/plain" }),
+      ]));
+    });
+
+    expect(container.querySelector('[data-testid="issue-chat-composer-drop-overlay"]')).not.toBeNull();
+    expect(container.textContent).toContain("Drop to upload");
+    expect(container.textContent).not.toContain("Drop image to upload");
+    expect(composer?.className).toContain("border-primary/45");
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput?.getAttribute("accept")).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows non-image attachment upload state in the composer after a drop from the editor", async () => {
+    const root = createRoot(container);
+    const onAttachImage = vi.fn(async (file: File) => ({
+      id: "attachment-1",
+      companyId: "company-1",
+      issueId: "issue-1",
+      issueCommentId: null,
+      assetId: "asset-1",
+      provider: "local_disk",
+      objectKey: "issues/issue-1/report.pdf",
+      contentPath: "/api/attachments/attachment-1/content",
+      originalFilename: file.name,
+      contentType: file.type,
+      byteSize: file.size,
+      sha256: "abc123",
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      createdAt: new Date("2026-04-24T12:00:00.000Z"),
+      updatedAt: new Date("2026-04-24T12:00:00.000Z"),
+    }));
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={async () => {}}
+            onAttachImage={onAttachImage}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const editor = container.querySelector('textarea[aria-label="Issue chat editor"]') as HTMLTextAreaElement | null;
+    const file = new File(["report body"], "report.pdf", { type: "application/pdf" });
+
+    await act(async () => {
+      editor?.dispatchEvent(createFileDragEvent("drop", [file]));
+    });
+
+    expect(onAttachImage).toHaveBeenCalledWith(file);
+    expect(container.querySelector('[data-testid="issue-chat-composer-attachments"]')).not.toBeNull();
+    expect(container.textContent).toContain("report.pdf");
+    expect(container.textContent).toContain("Attached to issue");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("renders the bottom spacer with zero height until the user has submitted", () => {
     const root = createRoot(container);
 

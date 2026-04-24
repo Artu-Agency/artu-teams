@@ -2268,6 +2268,37 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
     setIsDragOver(false);
   }
 
+  function handleFileDragEnter(evt: ReactDragEvent<HTMLDivElement>) {
+    if (!canAcceptFiles || !hasFilePayload(evt)) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    dragDepthRef.current += 1;
+    setIsDragOver(true);
+  }
+
+  function handleFileDragOver(evt: ReactDragEvent<HTMLDivElement>) {
+    if (!canAcceptFiles || !hasFilePayload(evt)) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    evt.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleFileDragLeave(evt: ReactDragEvent<HTMLDivElement>) {
+    if (!canAcceptFiles || !hasFilePayload(evt)) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragOver(false);
+  }
+
+  function handleFileDrop(evt: ReactDragEvent<HTMLDivElement>) {
+    if (!canAcceptFiles || !hasFilePayload(evt)) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    resetDragState();
+    void handleDroppedFiles(evt.dataTransfer?.files);
+  }
+
   const canSubmit = !submitting && !!body.trim();
 
   if (composerDisabledReason) {
@@ -2284,33 +2315,12 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
       data-testid="issue-chat-composer"
       className={cn(
         "relative rounded-md border border-border/70 bg-background/95 p-[15px] shadow-[0_-12px_28px_rgba(15,23,42,0.08)] backdrop-blur transition-[border-color,background-color,box-shadow] duration-150 supports-[backdrop-filter]:bg-background/85 dark:shadow-[0_-12px_28px_rgba(0,0,0,0.28)]",
-        isDragOver && "border-primary/45 bg-background shadow-[0_-12px_28px_rgba(15,23,42,0.08),0_0_0_1px_hsl(var(--primary)/0.18)]",
+        isDragOver && "border-primary/45 bg-background shadow-[0_-12px_28px_rgba(15,23,42,0.08),0_0_0_1px_hsl(var(--primary)/0.16)]",
       )}
-      onDragEnter={(evt) => {
-        if (!canAcceptFiles || !hasFilePayload(evt)) return;
-        dragDepthRef.current += 1;
-        setIsDragOver(true);
-      }}
-      onDragOver={(evt) => {
-        if (!canAcceptFiles || !hasFilePayload(evt)) return;
-        evt.preventDefault();
-        evt.dataTransfer.dropEffect = "copy";
-      }}
-      onDragLeave={() => {
-        if (!canAcceptFiles) return;
-        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-        if (dragDepthRef.current === 0) setIsDragOver(false);
-      }}
-      onDrop={(evt) => {
-        if (!canAcceptFiles) return;
-        if (evt.defaultPrevented) {
-          resetDragState();
-          return;
-        }
-        evt.preventDefault();
-        resetDragState();
-        void handleDroppedFiles(evt.dataTransfer?.files);
-      }}
+      onDragEnterCapture={handleFileDragEnter}
+      onDragOverCapture={handleFileDragOver}
+      onDragLeaveCapture={handleFileDragLeave}
+      onDropCapture={handleFileDrop}
     >
       {isDragOver && canAcceptFiles ? (
         <div
@@ -2322,7 +2332,7 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
               <Paperclip className="h-4 w-4" />
             </span>
             <div className="min-w-0">
-              <div className="text-sm font-medium text-foreground">Drop files to attach</div>
+              <div className="text-sm font-medium text-foreground">Drop to upload</div>
               <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
                 Images insert into the reply. Other files are added to this issue.
               </div>
