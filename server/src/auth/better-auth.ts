@@ -116,7 +116,15 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins?
       requireEmailVerification: false,
       disableSignUp: config.authDisableSignUp,
     },
-    advanced: buildBetterAuthAdvancedOptions({ disableSecureCookies: isHttpOnly }),
+    advanced: {
+      ...buildBetterAuthAdvancedOptions({ disableSecureCookies: isHttpOnly }),
+      ...(process.env.PAPERCLIP_COOKIE_DOMAIN ? {
+        crossSubDomainCookies: {
+          enabled: true,
+          domain: process.env.PAPERCLIP_COOKIE_DOMAIN,
+        },
+      } : {}),
+    },
   };
 
   if (!baseUrl) {
