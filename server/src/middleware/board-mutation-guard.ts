@@ -30,6 +30,14 @@ function trustedOriginsForRequest(req: Request) {
   // explicitly-configured PAPERCLIP_PUBLIC_URL when it's set.
   const publicUrl = parseOrigin(process.env.PAPERCLIP_PUBLIC_URL?.trim());
   if (publicUrl) origins.add(publicUrl);
+  // Trust origins listed in BETTER_AUTH_TRUSTED_ORIGINS (comma-separated)
+  const trustedOrigins = process.env.BETTER_AUTH_TRUSTED_ORIGINS?.trim();
+  if (trustedOrigins) {
+    for (const raw of trustedOrigins.split(",")) {
+      const parsed = parseOrigin(raw.trim());
+      if (parsed) origins.add(parsed);
+    }
+  }
   return origins;
 }
 
