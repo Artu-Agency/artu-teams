@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { machineService } from "../services/machines.js";
 import { badRequest } from "../errors.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
+import { generateMachineJwt } from "../realtime/machine-ws.js";
 
 export function machineRoutes(db: Db) {
   const router = Router();
@@ -62,7 +63,10 @@ export function machineRoutes(db: Db) {
       adapters: Array.isArray(adapters) ? adapters : [],
     });
 
-    res.status(201).json(machine);
+    // Generate a JWT so the CLI can open a WebSocket connection
+    const jwt = machine?.id ? generateMachineJwt(machine.id, ownerUserId ?? "unknown") : null;
+
+    res.status(201).json({ ...machine, jwt });
   });
 
   // DELETE /companies/:companyId/machines/:machineId — remove machine from company

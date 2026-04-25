@@ -1,0 +1,33 @@
+{
+  "name": "artu-teams",
+  "version": "0.1.0",
+  "description": "Connect your machine to an Artu Teams server",
+  "type": "module",
+  "bin": {
+    "artu-teams": "./dist/index.js"
+  },
+  "keywords": ["artu", "ai", "agents", "machines", "orchestration"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Artu-Agency/artu-teams",
+    "directory": "packages/connect-cli"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node --input-type=module -e \"import esbuild from 'esbuild'; await esbuild.build({ entryPoints: ['src/index.ts'], bundle: true, platform: 'node', target: 'node18', format: 'esm', outfile: 'dist/index.js', banner: { js: '#!/usr/bin/env node' }, external: ['ws'], treeShaking: true });\" && chmod +x dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3"
+  }
+}
