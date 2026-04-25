@@ -112,7 +112,7 @@ export function machineService(db: Db) {
       throw unprocessable("Invite token has expired");
     }
 
-    // Create the machine
+    // Create the machine — use invite creator as owner (valid FK to user table)
     const [machine] = await db
       .insert(machines)
       .values({
@@ -120,7 +120,7 @@ export function machineService(db: Db) {
         hostname: machineInfo.hostname,
         os: machineInfo.os,
         arch: machineInfo.arch,
-        ownerUserId: machineInfo.ownerUserId,
+        ownerUserId: invite.createdBy,
         status: "online",
         lastSeenAt: new Date(),
       })
