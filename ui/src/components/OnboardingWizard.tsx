@@ -818,16 +818,27 @@ export function OnboardingWizard() {
                     </div>
                   </div>
 
-                  {machineInviteLoading ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Generating invite...
+                  {connectedMachine ? (
+                    <div className="flex items-center gap-2 rounded-md border border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10 px-3 py-3 text-xs text-green-700 dark:text-green-300 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                      <Check className="h-4 w-4 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium">{connectedMachine.name}</p>
+                        <p className="text-[11px] opacity-80 mt-0.5">
+                          {connectedMachine.hostname} &middot; {connectedMachine.os} {connectedMachine.arch}
+                        </p>
+                        {connectedMachine.adapters.length > 0 && (
+                          <p className="text-[11px] opacity-80 mt-0.5">
+                            {connectedMachine.adapters.length} adapter{connectedMachine.adapters.length !== 1 ? "s" : ""} detected
+                          </p>
+                        )}
+                      </div>
+                      <MachineStatusBadge status={connectedMachine.status} />
                     </div>
                   ) : machineInviteError ? (
                     <div className="text-sm text-destructive py-2">
                       {machineInviteError}
                     </div>
-                  ) : (
+                  ) : machineInviteToken ? (
                     <>
                       <div className="relative group">
                         <pre className="bg-muted/50 border border-border p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all">
@@ -846,33 +857,18 @@ export function OnboardingWizard() {
                           )}
                         </Button>
                       </div>
-
                       <p className="text-xs text-muted-foreground">
                         Link expires in 24 hours.
                       </p>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Waiting for connection...
+                      </div>
                     </>
-                  )}
-
-                  {!connectedMachine && machineInviteToken ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Waiting for connection...
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 rounded-md border border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10 px-3 py-3 text-xs text-green-700 dark:text-green-300 animate-in fade-in slide-in-from-bottom-1 duration-300">
-                      <Check className="h-4 w-4 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium">{connectedMachine.name}</p>
-                        <p className="text-[11px] opacity-80 mt-0.5">
-                          {connectedMachine.hostname} &middot; {connectedMachine.os} {connectedMachine.arch}
-                        </p>
-                        {connectedMachine.adapters.length > 0 && (
-                          <p className="text-[11px] opacity-80 mt-0.5">
-                            {connectedMachine.adapters.length} adapter{connectedMachine.adapters.length !== 1 ? "s" : ""} detected
-                          </p>
-                        )}
-                      </div>
-                      <MachineStatusBadge status={connectedMachine.status} />
                     </div>
                   )}
                 </div>
