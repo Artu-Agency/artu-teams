@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL || "/api";
+export const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 export class ApiError extends Error {
   status: number;
@@ -19,7 +19,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     headers,
     credentials: "include",
     ...init,

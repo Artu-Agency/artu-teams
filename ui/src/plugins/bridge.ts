@@ -26,6 +26,7 @@
  */
 
 import { createContext, useCallback, useContext, useRef, useState, useEffect } from "react";
+import { API_BASE } from "../api/client";
 import type {
   PluginBridgeErrorCode,
   PluginLauncherBounds,
@@ -421,7 +422,7 @@ export function usePluginStream<T = unknown>(
 
     const params = new URLSearchParams({ companyId: effectiveCompanyId });
     const source = new EventSource(
-      `/api/plugins/${encodeURIComponent(pluginId)}/bridge/stream/${encodeURIComponent(channel)}?${params.toString()}`,
+      `${API_BASE}/plugins/${encodeURIComponent(pluginId)}/bridge/stream/${encodeURIComponent(channel)}?${params.toString()}`,
       { withCredentials: true },
     );
     sourceRef.current = source;

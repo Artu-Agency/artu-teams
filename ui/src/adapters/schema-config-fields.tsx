@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 import type { AdapterConfigSchema, ConfigFieldSchema, CreateConfigValues } from "@paperclipai/adapter-utils";
+import { API_BASE } from "../api/client";
 
 import type { AdapterConfigFieldsProps } from "./types";
 import {
@@ -217,7 +218,7 @@ async function fetchConfigSchema(adapterType: string): Promise<AdapterConfigSche
 
   const promise = (async () => {
     try {
-      const res = await fetch(`/api/adapters/${encodeURIComponent(adapterType)}/config-schema`);
+      const res = await fetch(`${API_BASE}/adapters/${encodeURIComponent(adapterType)}/config-schema`);
       if (!res.ok) {
         failedSchemaTypes.add(adapterType);
         return null;

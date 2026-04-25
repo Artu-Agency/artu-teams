@@ -8,6 +8,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
+import { API_BASE } from "../api/client";
 import { companiesApi } from "../api/companies";
 import { healthApi } from "../api/health";
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
@@ -697,7 +698,7 @@ export function InviteLandingPage() {
                 <form
                   className="space-y-4"
                   method="post"
-                  action={authMode === "sign_up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email"}
+                  action={authMode === "sign_up" ? `${API_BASE}/auth/sign-up/email` : `${API_BASE}/auth/sign-in/email`}
                   onSubmit={(event) => {
                     event.preventDefault();
                     if (authMutation.isPending) return;

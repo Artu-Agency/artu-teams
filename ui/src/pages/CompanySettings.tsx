@@ -11,6 +11,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { companiesApi } from "../api/companies";
 import { accessApi } from "../api/access";
+import { API_BASE } from "../api/client";
 import { assetsApi } from "../api/assets";
 import { environmentsApi } from "../api/environments";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -278,7 +279,7 @@ export function CompanySettings() {
       const onboardingTextLink =
         invite.onboardingTextUrl ??
         invite.onboardingTextPath ??
-        `/api/invites/${invite.token}/onboarding.txt`;
+        `${API_BASE}/invites/${invite.token}/onboarding.txt`;
       const absoluteUrl = onboardingTextLink.startsWith("http")
         ? onboardingTextLink
         : `${base}${onboardingTextLink}`;
