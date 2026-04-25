@@ -853,7 +853,7 @@ export function OnboardingWizard() {
                     </>
                   )}
 
-                  {!connectedMachine ? (
+                  {!connectedMachine && machineInviteToken ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Waiting for connection...
