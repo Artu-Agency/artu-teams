@@ -115,6 +115,7 @@ export function OnboardingWizard() {
   const [machineInviteToken, setMachineInviteToken] = useState<string | null>(null);
   const [machineInviteLoading, setMachineInviteLoading] = useState(false);
   const [machineInviteError, setMachineInviteError] = useState<string | null>(null);
+  const machineInviteRequestedRef = useRef(false);
   const [connectedMachine, setConnectedMachine] = useState<Machine | null>(null);
   const [machineInitialCount, setMachineInitialCount] = useState<number | null>(null);
   const [machineCopied, setMachineCopied] = useState(false);
@@ -437,21 +438,19 @@ export function OnboardingWizard() {
 
   // Auto-generate machine invite when entering step 2 (Machine)
   useEffect(() => {
-    if (step !== 2 || !createdCompanyId || machineInviteToken || machineInviteLoading) return;
-    let cancelled = false;
+    if (step !== 2 || !createdCompanyId || machineInviteToken || machineInviteRequestedRef.current) return;
+    machineInviteRequestedRef.current = true;
     setMachineInviteLoading(true);
     setMachineInviteError(null);
     machinesApi.createInvite(createdCompanyId).then((invite) => {
-      if (cancelled) return;
       setMachineInviteToken(invite.token);
       setMachineInviteLoading(false);
     }).catch((err) => {
-      if (cancelled) return;
       setMachineInviteError(err instanceof Error ? err.message : "Failed to generate invite");
       setMachineInviteLoading(false);
+      machineInviteRequestedRef.current = false; // allow retry on error
     });
-    return () => { cancelled = true; };
-  }, [step, createdCompanyId, machineInviteToken, machineInviteLoading]);
+  }, [step, createdCompanyId, machineInviteToken]);
 
   // Poll for machines when on step 2 (Machine)
   const { data: onboardingMachines } = useQuery({
