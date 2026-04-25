@@ -184,7 +184,7 @@ function createSshEnvironmentDriver(db: Db): EnvironmentRuntimeDriver {
       });
       if (!paperclipApiUrl) {
         throw new Error(
-          `SSH environment ${parsed.config.username}@${parsed.config.host} could not reach any Paperclip API candidates.`,
+          `SSH environment ${parsed.config.username}@${parsed.config.host} could not reach any Artu Teams API candidates.`,
         );
       }
       return await environmentsSvc.acquireLease({
