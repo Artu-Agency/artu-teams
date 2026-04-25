@@ -66,7 +66,15 @@ export function machineRoutes(db: Db) {
     // Generate a JWT so the CLI can open a WebSocket connection
     const jwt = machine?.id ? generateMachineJwt(machine.id, ownerUserId ?? "unknown") : null;
 
-    res.status(201).json({ ...machine, jwt });
+    // Build direct WebSocket URL (bypasses any reverse proxy that can't handle WS)
+    const publicUrl = process.env.PAPERCLIP_PUBLIC_URL?.trim();
+    let wsUrl: string | null = null;
+    if (jwt && publicUrl) {
+      const wsBase = publicUrl.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
+      wsUrl = `${wsBase}/ws/machines?token=${jwt}`;
+    }
+
+    res.status(201).json({ ...machine, jwt, wsUrl });
   });
 
   // DELETE /companies/:companyId/machines/:machineId — remove machine from company

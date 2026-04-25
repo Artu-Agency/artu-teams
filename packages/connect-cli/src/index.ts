@@ -133,6 +133,7 @@ async function main() {
     name: string;
     hostname: string;
     jwt?: string;
+    wsUrl?: string;
   };
 
   console.log(`  Machine registered: ${machine.id}`);
@@ -140,26 +141,24 @@ async function main() {
   // Step 2: Connect WebSocket
   console.log("  [2/3] Connecting WebSocket...");
 
-  // The server needs to return a JWT for WebSocket auth.
-  // If the redeem endpoint returns a jwt field, use it.
-  // Otherwise we need to get one from the server.
-  const jwt = machine.jwt;
-  if (!jwt) {
-    console.log("  Machine registered successfully but no WebSocket JWT received.");
-    console.log("  The server may need to be updated to return a JWT on redeem.");
+  // Use server-provided wsUrl (direct to backend, bypasses Vercel proxy)
+  // Fallback: derive from server base if wsUrl not provided
+  let wsUrl: string;
+  if (machine.wsUrl) {
+    wsUrl = machine.wsUrl;
+  } else if (machine.jwt) {
+    wsUrl = serverBase
+      .replace(/^https:/, "wss:")
+      .replace(/^http:/, "ws:")
+      .replace(/\/api\/?$/, "") + `/ws/machines?token=${machine.jwt}`;
+  } else {
+    console.log("  Machine registered successfully.");
     console.log(`\n  Machine ID: ${machine.id}`);
     console.log("  Status: Connected (HTTP only)\n");
-    // Keep process alive so the onboarding wizard detects the machine
     console.log("  Press Ctrl+C to disconnect.\n");
-    await new Promise(() => {}); // hang forever
+    await new Promise(() => {});
     return;
   }
-
-  // Build WebSocket URL from server base
-  const wsUrl = serverBase
-    .replace(/^https:/, "wss:")
-    .replace(/^http:/, "ws:")
-    .replace(/\/api\/?$/, "") + `/ws/machines?token=${jwt}`;
 
   const ws = new WebSocket(wsUrl);
 
