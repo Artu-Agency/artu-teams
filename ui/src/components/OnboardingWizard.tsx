@@ -54,11 +54,16 @@ import {
   Check,
   Loader2,
   ChevronDown,
-  X
+  X,
+  Monitor,
+  Copy
 } from "lucide-react";
+import { machinesApi, type Machine } from "../api/machines";
+import { MachineStatusBadge } from "./MachineStatusBadge";
+import { API_BASE } from "../api/client";
 
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3 | 4 | 5;
 type AdapterType = string;
 
 const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the company.
@@ -106,7 +111,15 @@ export function OnboardingWizard() {
   const [companyName, setCompanyName] = useState("");
   const [companyGoal, setCompanyGoal] = useState("");
 
-  // Step 2
+  // Step 2 (Machine)
+  const [machineInviteToken, setMachineInviteToken] = useState<string | null>(null);
+  const [machineInviteLoading, setMachineInviteLoading] = useState(false);
+  const [machineInviteError, setMachineInviteError] = useState<string | null>(null);
+  const [connectedMachine, setConnectedMachine] = useState<Machine | null>(null);
+  const [machineInitialCount, setMachineInitialCount] = useState<number | null>(null);
+  const [machineCopied, setMachineCopied] = useState(false);
+
+  // Step 3 (Agent)
   const [agentName, setAgentName] = useState("CEO");
   const [adapterType, setAdapterType] = useState<AdapterType>("claude_local");
   const [model, setModel] = useState("");
@@ -122,7 +135,7 @@ export function OnboardingWizard() {
   const [unsetAnthropicLoading, setUnsetAnthropicLoading] = useState(false);
   const [showMoreAdapters, setShowMoreAdapters] = useState(false);
 
-  // Step 3
+  // Step 4 (Task)
   const [taskTitle, setTaskTitle] = useState(
     "Hire your first engineer and create a hiring plan"
   );
@@ -183,9 +196,9 @@ export function OnboardingWizard() {
     if (company) setCreatedCompanyPrefix(company.issuePrefix);
   }, [effectiveOnboardingOpen, createdCompanyId, createdCompanyPrefix, companies]);
 
-  // Resize textarea when step 3 is shown or description changes
+  // Resize textarea when step 4 (Task) is shown or description changes
   useEffect(() => {
-    if (step === 3) autoResizeTextarea();
+    if (step === 4) autoResizeTextarea();
   }, [step, taskDescription, autoResizeTextarea]);
 
   const {
@@ -198,7 +211,7 @@ export function OnboardingWizard() {
       ? queryKeys.agents.adapterModels(createdCompanyId, adapterType)
       : ["agents", "none", "adapter-models", adapterType],
     queryFn: () => agentsApi.adapterModels(createdCompanyId!, adapterType),
-    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 2
+    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 3
   });
   const getCapabilities = useAdapterCapabilities();
   const adapterCaps = getCapabilities(adapterType);
@@ -230,7 +243,7 @@ export function OnboardingWizard() {
     (COMMAND_PLACEHOLDERS[adapterType] ?? adapterType.replace(/_local$/, ""));
 
   useEffect(() => {
-    if (step !== 2) return;
+    if (step !== 3) return;
     setAdapterEnvResult(null);
     setAdapterEnvError(null);
   }, [step, adapterType, model, command, args, url]);
@@ -287,6 +300,12 @@ export function OnboardingWizard() {
     setError(null);
     setCompanyName("");
     setCompanyGoal("");
+    setMachineInviteToken(null);
+    setMachineInviteLoading(false);
+    setMachineInviteError(null);
+    setConnectedMachine(null);
+    setMachineInitialCount(null);
+    setMachineCopied(false);
     setAgentName("CEO");
     setAdapterType("claude_local");
     setModel("");
@@ -416,7 +435,62 @@ export function OnboardingWizard() {
     }
   }
 
-  async function handleStep2Next() {
+  // Auto-generate machine invite when entering step 2 (Machine)
+  useEffect(() => {
+    if (step !== 2 || !createdCompanyId || machineInviteToken || machineInviteLoading) return;
+    let cancelled = false;
+    setMachineInviteLoading(true);
+    setMachineInviteError(null);
+    machinesApi.createInvite(createdCompanyId).then((invite) => {
+      if (cancelled) return;
+      setMachineInviteToken(invite.token);
+      setMachineInviteLoading(false);
+    }).catch((err) => {
+      if (cancelled) return;
+      setMachineInviteError(err instanceof Error ? err.message : "Failed to generate invite");
+      setMachineInviteLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [step, createdCompanyId, machineInviteToken, machineInviteLoading]);
+
+  // Poll for machines when on step 2 (Machine)
+  const { data: onboardingMachines } = useQuery({
+    queryKey: queryKeys.machines.list(createdCompanyId!),
+    queryFn: () => machinesApi.list(createdCompanyId!),
+    enabled: !!createdCompanyId && step === 2 && !!machineInviteToken,
+    refetchInterval: 3000,
+  });
+
+  // Detect new machine connection
+  useEffect(() => {
+    if (!onboardingMachines || step !== 2) return;
+    if (machineInitialCount === null) {
+      setMachineInitialCount(onboardingMachines.length);
+      return;
+    }
+    if (onboardingMachines.length > machineInitialCount && !connectedMachine) {
+      const newest = onboardingMachines[onboardingMachines.length - 1];
+      setConnectedMachine(newest);
+    }
+  }, [onboardingMachines, step, machineInitialCount, connectedMachine]);
+
+  const machineServerUrl = API_BASE.startsWith("http") ? API_BASE : `${window.location.origin}${API_BASE}`;
+  const machineCliCommand = `npx artu-teams connect --server ${machineServerUrl} --token ${machineInviteToken ?? "<token>"}`;
+
+  async function handleMachineCopy() {
+    try {
+      await navigator.clipboard.writeText(machineCliCommand);
+      setMachineCopied(true);
+      setTimeout(() => setMachineCopied(false), 2000);
+    } catch { /* ignore */ }
+  }
+
+  function handleStep2Next() {
+    if (!connectedMachine) return;
+    setStep(3);
+  }
+
+  async function handleStep3Next() {
     if (!createdCompanyId) return;
     setLoading(true);
     setError(null);
@@ -480,7 +554,7 @@ export function OnboardingWizard() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.agents.list(createdCompanyId)
       });
-      setStep(3);
+      setStep(4);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create agent");
     } finally {
@@ -537,10 +611,10 @@ export function OnboardingWizard() {
     }
   }
 
-  async function handleStep3Next() {
+  async function handleStep4Next() {
     if (!createdCompanyId || !createdAgentId) return;
     setError(null);
-    setStep(4);
+    setStep(5);
   }
 
   async function handleLaunch() {
@@ -606,9 +680,10 @@ export function OnboardingWizard() {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       if (step === 1 && companyName.trim()) handleStep1Next();
-      else if (step === 2 && agentName.trim()) handleStep2Next();
-      else if (step === 3 && taskTitle.trim()) handleStep3Next();
-      else if (step === 4) handleLaunch();
+      else if (step === 2 && connectedMachine) handleStep2Next();
+      else if (step === 3 && agentName.trim()) handleStep3Next();
+      else if (step === 4 && taskTitle.trim()) handleStep4Next();
+      else if (step === 5) handleLaunch();
     }
   }
 
@@ -652,9 +727,10 @@ export function OnboardingWizard() {
                 {(
                   [
                     { step: 1 as Step, label: "Company", icon: Building2 },
-                    { step: 2 as Step, label: "Agent", icon: Bot },
-                    { step: 3 as Step, label: "Task", icon: ListTodo },
-                    { step: 4 as Step, label: "Launch", icon: Rocket }
+                    { step: 2 as Step, label: "Machine", icon: Monitor },
+                    { step: 3 as Step, label: "Agent", icon: Bot },
+                    { step: 4 as Step, label: "Task", icon: ListTodo },
+                    { step: 5 as Step, label: "Launch", icon: Rocket }
                   ] as const
                 ).map(({ step: s, label, icon: Icon }) => (
                   <button
@@ -729,6 +805,80 @@ export function OnboardingWizard() {
               )}
 
               {step === 2 && (
+                <div className="space-y-5">
+                  <div className="flex items-center gap-3 mb-1">
+                    <div className="bg-muted/50 p-2">
+                      <Monitor className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="font-medium">Connect your machine</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Your machine runs AI tasks. Connect it to start working.
+                      </p>
+                    </div>
+                  </div>
+
+                  {machineInviteLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating invite...
+                    </div>
+                  ) : machineInviteError ? (
+                    <div className="text-sm text-destructive py-2">
+                      {machineInviteError}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="relative group">
+                        <pre className="bg-muted/50 border border-border p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all">
+                          {machineCliCommand}
+                        </pre>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={handleMachineCopy}
+                        >
+                          {machineCopied ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </div>
+
+                      <p className="text-xs text-muted-foreground">
+                        Link expires in 24 hours.
+                      </p>
+                    </>
+                  )}
+
+                  {!connectedMachine ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Waiting for connection...
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 rounded-md border border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10 px-3 py-3 text-xs text-green-700 dark:text-green-300 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                      <Check className="h-4 w-4 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium">{connectedMachine.name}</p>
+                        <p className="text-[11px] opacity-80 mt-0.5">
+                          {connectedMachine.hostname} &middot; {connectedMachine.os} {connectedMachine.arch}
+                        </p>
+                        {connectedMachine.adapters.length > 0 && (
+                          <p className="text-[11px] opacity-80 mt-0.5">
+                            {connectedMachine.adapters.length} adapter{connectedMachine.adapters.length !== 1 ? "s" : ""} detected
+                          </p>
+                        )}
+                      </div>
+                      <MachineStatusBadge status={connectedMachine.status} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {step === 3 && (
                 <div className="space-y-5">
                   <div className="flex items-center gap-3 mb-1">
                     <div className="bg-muted/50 p-2">
@@ -968,6 +1118,11 @@ export function OnboardingWizard() {
                           <p className="text-[11px] text-muted-foreground">
                             Runs a live probe that asks the adapter CLI to
                             respond with hello.
+                            {connectedMachine && (
+                              <span className="block mt-0.5">
+                                Tests will run on: <span className="font-medium">{connectedMachine.name}</span>
+                              </span>
+                            )}
                           </p>
                         </div>
                         <Button
@@ -1099,7 +1254,7 @@ export function OnboardingWizard() {
                 </div>
               )}
 
-              {step === 3 && (
+              {step === 4 && (
                 <div className="space-y-5">
                   <div className="flex items-center gap-3 mb-1">
                     <div className="bg-muted/50 p-2">
@@ -1140,7 +1295,7 @@ export function OnboardingWizard() {
                 </div>
               )}
 
-              {step === 4 && (
+              {step === 5 && (
                 <div className="space-y-5">
                   <div className="flex items-center gap-3 mb-1">
                     <div className="bg-muted/50 p-2">
@@ -1165,6 +1320,20 @@ export function OnboardingWizard() {
                       </div>
                       <Check className="h-4 w-4 text-green-500 shrink-0" />
                     </div>
+                    {connectedMachine && (
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {connectedMachine.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {connectedMachine.hostname} &middot; {connectedMachine.os}
+                          </p>
+                        </div>
+                        <Check className="h-4 w-4 text-green-500 shrink-0" />
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 px-3 py-2.5">
                       <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -1231,23 +1400,19 @@ export function OnboardingWizard() {
                   {step === 2 && (
                     <Button
                       size="sm"
-                      disabled={
-                        !agentName.trim() || loading || adapterEnvLoading
-                      }
+                      disabled={!connectedMachine}
                       onClick={handleStep2Next}
                     >
-                      {loading ? (
-                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                      ) : (
-                        <ArrowRight className="h-3.5 w-3.5 mr-1" />
-                      )}
-                      {loading ? "Creating..." : "Next"}
+                      <ArrowRight className="h-3.5 w-3.5 mr-1" />
+                      Next
                     </Button>
                   )}
                   {step === 3 && (
                     <Button
                       size="sm"
-                      disabled={!taskTitle.trim() || loading}
+                      disabled={
+                        !agentName.trim() || loading || adapterEnvLoading
+                      }
                       onClick={handleStep3Next}
                     >
                       {loading ? (
@@ -1259,6 +1424,20 @@ export function OnboardingWizard() {
                     </Button>
                   )}
                   {step === 4 && (
+                    <Button
+                      size="sm"
+                      disabled={!taskTitle.trim() || loading}
+                      onClick={handleStep4Next}
+                    >
+                      {loading ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <ArrowRight className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      {loading ? "Creating..." : "Next"}
+                    </Button>
+                  )}
+                  {step === 5 && (
                     <Button size="sm" disabled={loading} onClick={handleLaunch}>
                       {loading ? (
                         <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />

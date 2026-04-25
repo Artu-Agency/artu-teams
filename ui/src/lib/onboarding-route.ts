@@ -21,7 +21,7 @@ export function resolveRouteOnboardingOptions(params: {
   pathname: string;
   companyPrefix?: string;
   companies: OnboardingRouteCompany[];
-}): { initialStep: 1 | 2; companyId?: string } | null {
+}): { initialStep: 1 | 2 | 3 | 4 | 5; companyId?: string } | null {
   const { pathname, companyPrefix, companies } = params;
 
   if (!isOnboardingPath(pathname)) return null;
