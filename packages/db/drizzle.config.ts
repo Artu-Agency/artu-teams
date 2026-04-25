@@ -4,6 +4,7 @@ export default defineConfig({
   schema: "./dist/schema/*.js",
   out: "./src/migrations",
   dialect: "postgresql",
+  schemaFilter: [process.env.DATABASE_SCHEMA || "public"],
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },

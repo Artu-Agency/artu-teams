@@ -10,8 +10,31 @@ const MIGRATIONS_FOLDER = fileURLToPath(new URL("./migrations", import.meta.url)
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
 const MIGRATIONS_JOURNAL_JSON = fileURLToPath(new URL("./migrations/meta/_journal.json", import.meta.url));
 
+function getSchemaFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const searchPath = u.searchParams.get('search_path');
+    if (searchPath) return searchPath;
+    const options = u.searchParams.get('options');
+    if (options) {
+      const match = options.match(/search_path[=](\S+)/);
+      if (match) return match[1];
+    }
+    return 'public';
+  } catch {
+    return 'public';
+  }
+}
+
 function createUtilitySql(url: string) {
-  return postgres(url, { max: 1, onnotice: () => {} });
+  const dbSchema = getSchemaFromUrl(url);
+  return postgres(url, {
+    max: 1,
+    onnotice: () => {},
+    ...(dbSchema !== 'public' ? {
+      connection: { search_path: dbSchema },
+    } : {}),
+  });
 }
 
 function isSafeIdentifier(value: string): boolean {
@@ -46,7 +69,12 @@ export type MigrationState =
     };
 
 export function createDb(url: string) {
-  const sql = postgres(url);
+  const dbSchema = getSchemaFromUrl(url);
+  const sql = postgres(url, {
+    ...(dbSchema !== 'public' ? {
+      connection: { search_path: dbSchema },
+    } : {}),
+  });
   return drizzlePg(sql, { schema });
 }
 
@@ -311,12 +339,13 @@ async function getMigrationTableColumnNames(
 async function tableExists(
   sql: ReturnType<typeof postgres>,
   tableName: string,
+  schemaName = 'public',
 ): Promise<boolean> {
   const rows = await sql<{ exists: boolean }[]>`
     SELECT EXISTS (
       SELECT 1
       FROM information_schema.tables
-      WHERE table_schema = 'public'
+      WHERE table_schema = ${schemaName}
         AND table_name = ${tableName}
     ) AS exists
   `;
@@ -327,12 +356,13 @@ async function columnExists(
   sql: ReturnType<typeof postgres>,
   tableName: string,
   columnName: string,
+  schemaName = 'public',
 ): Promise<boolean> {
   const rows = await sql<{ exists: boolean }[]>`
     SELECT EXISTS (
       SELECT 1
       FROM information_schema.columns
-      WHERE table_schema = 'public'
+      WHERE table_schema = ${schemaName}
         AND table_name = ${tableName}
         AND column_name = ${columnName}
     ) AS exists
@@ -343,13 +373,14 @@ async function columnExists(
 async function indexExists(
   sql: ReturnType<typeof postgres>,
   indexName: string,
+  schemaName = 'public',
 ): Promise<boolean> {
   const rows = await sql<{ exists: boolean }[]>`
     SELECT EXISTS (
       SELECT 1
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public'
+      WHERE n.nspname = ${schemaName}
         AND c.relkind = 'i'
         AND c.relname = ${indexName}
     ) AS exists
@@ -360,13 +391,14 @@ async function indexExists(
 async function constraintExists(
   sql: ReturnType<typeof postgres>,
   constraintName: string,
+  schemaName = 'public',
 ): Promise<boolean> {
   const rows = await sql<{ exists: boolean }[]>`
     SELECT EXISTS (
       SELECT 1
       FROM pg_constraint c
       JOIN pg_namespace n ON n.oid = c.connamespace
-      WHERE n.nspname = 'public'
+      WHERE n.nspname = ${schemaName}
         AND c.conname = ${constraintName}
     ) AS exists
   `;
@@ -376,29 +408,30 @@ async function constraintExists(
 async function migrationStatementAlreadyApplied(
   sql: ReturnType<typeof postgres>,
   statement: string,
+  schemaName = 'public',
 ): Promise<boolean> {
   const normalized = statement.replace(/\s+/g, " ").trim();
 
   const createTableMatch = normalized.match(/^CREATE TABLE(?: IF NOT EXISTS)? "([^"]+)"/i);
   if (createTableMatch) {
-    return tableExists(sql, createTableMatch[1]);
+    return tableExists(sql, createTableMatch[1], schemaName);
   }
 
   const addColumnMatch = normalized.match(
     /^ALTER TABLE "([^"]+)" ADD COLUMN(?: IF NOT EXISTS)? "([^"]+)"/i,
   );
   if (addColumnMatch) {
-    return columnExists(sql, addColumnMatch[1], addColumnMatch[2]);
+    return columnExists(sql, addColumnMatch[1], addColumnMatch[2], schemaName);
   }
 
   const createIndexMatch = normalized.match(/^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)? "([^"]+)"/i);
   if (createIndexMatch) {
-    return indexExists(sql, createIndexMatch[1]);
+    return indexExists(sql, createIndexMatch[1], schemaName);
   }
 
   const addConstraintMatch = normalized.match(/^ALTER TABLE "([^"]+)" ADD CONSTRAINT "([^"]+)"/i);
   if (addConstraintMatch) {
-    return constraintExists(sql, addConstraintMatch[2]);
+    return constraintExists(sql, addConstraintMatch[2], schemaName);
   }
 
   // If we cannot reason about a statement safely, require manual migration.
@@ -408,12 +441,13 @@ async function migrationStatementAlreadyApplied(
 async function migrationContentAlreadyApplied(
   sql: ReturnType<typeof postgres>,
   migrationContent: string,
+  schemaName = 'public',
 ): Promise<boolean> {
   const statements = splitMigrationStatements(migrationContent);
   if (statements.length === 0) return false;
 
   for (const statement of statements) {
-    const applied = await migrationStatementAlreadyApplied(sql, statement);
+    const applied = await migrationStatementAlreadyApplied(sql, statement, schemaName);
     if (!applied) return false;
   }
 
@@ -491,6 +525,7 @@ export async function reconcilePendingMigrationHistory(
     return { repairedMigrations: [], remainingMigrations: [] };
   }
 
+  const dbSchema = getSchemaFromUrl(url);
   const sql = createUtilitySql(url);
   const repairedMigrations: string[] = [];
 
@@ -507,7 +542,7 @@ export async function reconcilePendingMigrationHistory(
 
     for (const migrationFile of state.pendingMigrations) {
       const migrationContent = await readMigrationFileContent(migrationFile);
-      const alreadyApplied = await migrationContentAlreadyApplied(sql, migrationContent);
+      const alreadyApplied = await migrationContentAlreadyApplied(sql, migrationContent, dbSchema);
       if (!alreadyApplied) break;
 
       const hash = createHash("sha256").update(migrationContent).digest("hex");
@@ -598,6 +633,7 @@ async function discoverMigrationTableSchema(sql: ReturnType<typeof postgres>): P
 }
 
 export async function inspectMigrations(url: string): Promise<MigrationState> {
+  const dbSchema = getSchemaFromUrl(url);
   const sql = createUtilitySql(url);
 
   try {
@@ -605,7 +641,7 @@ export async function inspectMigrations(url: string): Promise<MigrationState> {
     const tableCountResult = await sql<{ count: number }[]>`
       select count(*)::int as count
       from information_schema.tables
-      where table_schema = 'public'
+      where table_schema = ${dbSchema}
         and table_type = 'BASE TABLE'
     `;
     const tableCount = tableCountResult[0]?.count ?? 0;
@@ -662,8 +698,12 @@ export async function applyPendingMigrations(url: string): Promise<void> {
   if (initialState.status === "upToDate") return;
 
   if (initialState.reason === "no-migration-journal-empty-db") {
+    const dbSchema = getSchemaFromUrl(url);
     const sql = createUtilitySql(url);
     try {
+      if (dbSchema !== 'public') {
+        await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS "${dbSchema.replaceAll('"', '""')}"`);
+      }
       const db = drizzlePg(sql);
       await migratePg(db, { migrationsFolder: MIGRATIONS_FOLDER });
     } finally {
@@ -723,6 +763,7 @@ export type MigrationBootstrapResult =
   | { migrated: false; reason: "not-empty-no-migration-journal"; tableCount: number };
 
 export async function migratePostgresIfEmpty(url: string): Promise<MigrationBootstrapResult> {
+  const dbSchema = getSchemaFromUrl(url);
   const sql = createUtilitySql(url);
 
   try {
@@ -731,7 +772,7 @@ export async function migratePostgresIfEmpty(url: string): Promise<MigrationBoot
     const tableCountResult = await sql<{ count: number }[]>`
       select count(*)::int as count
       from information_schema.tables
-      where table_schema = 'public'
+      where table_schema = ${dbSchema}
         and table_type = 'BASE TABLE'
     `;
 
@@ -743,6 +784,10 @@ export async function migratePostgresIfEmpty(url: string): Promise<MigrationBoot
 
     if (tableCount > 0) {
       return { migrated: false, reason: "not-empty-no-migration-journal", tableCount };
+    }
+
+    if (dbSchema !== 'public') {
+      await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS "${dbSchema.replaceAll('"', '""')}"`);
     }
 
     const db = drizzlePg(sql);
