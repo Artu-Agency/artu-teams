@@ -71,3 +71,7 @@ export { pluginDatabaseNamespaces, pluginMigrations } from "./plugin_database.js
 export { pluginJobs, pluginJobRuns } from "./plugin_jobs.js";
 export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
 export { pluginLogs } from "./plugin_logs.js";
+export { machines } from "./machines.js";
+export { machineCompanies } from "./machine_companies.js";
+export { machineAdapters } from "./machine_adapters.js";
+export { machineInvites } from "./machine_invites.js";

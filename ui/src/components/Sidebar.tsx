@@ -11,6 +11,7 @@ import {
   Boxes,
   Repeat,
   GitBranch,
+  Monitor,
   Settings,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -109,6 +110,10 @@ export function Sidebar() {
         <SidebarProjects />
 
         <SidebarAgents />
+
+        <SidebarSection label="Infrastructure">
+          <SidebarNavItem to="/machines" label="Machines" icon={Monitor} />
+        </SidebarSection>
 
         <SidebarSection label="Company">
           <SidebarNavItem to="/org" label="Org" icon={Network} />

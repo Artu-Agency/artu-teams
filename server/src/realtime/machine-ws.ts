@@ -1,0 +1,427 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+import type { IncomingMessage, Server as HttpServer } from "node:http";
+import { createRequire } from "node:module";
+import type { Duplex } from "node:stream";
+import type { Db } from "@paperclipai/db";
+import { logger } from "../middleware/logger.js";
+
+// ---------------------------------------------------------------------------
+// ws library (CJS compat, same pattern as live-events-ws.ts)
+// ---------------------------------------------------------------------------
+
+interface WsSocket {
+  readyState: number;
+  ping(): void;
+  send(data: string): void;
+  terminate(): void;
+  close(code?: number, reason?: string): void;
+  on(event: "pong", listener: () => void): void;
+  on(event: "message", listener: (data: Buffer) => void): void;
+  on(event: "close", listener: () => void): void;
+  on(event: "error", listener: (err: Error) => void): void;
+}
+
+interface WsServer {
+  clients: Set<WsSocket>;
+  on(event: "connection", listener: (socket: WsSocket, req: IncomingMessage) => void): void;
+  on(event: "close", listener: () => void): void;
+  handleUpgrade(
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    callback: (ws: WsSocket) => void,
+  ): void;
+  emit(event: "connection", ws: WsSocket, req: IncomingMessage): boolean;
+}
+
+const require = createRequire(import.meta.url);
+const { WebSocket, WebSocketServer } = require("ws") as {
+  WebSocket: { OPEN: number };
+  WebSocketServer: new (opts: { noServer: boolean }) => WsServer;
+};
+
+// ---------------------------------------------------------------------------
+// Machine JWT helpers
+// ---------------------------------------------------------------------------
+
+const JWT_ALGORITHM = "HS256";
+
+function jwtSecret(): string | null {
+  const secret = process.env.PAPERCLIP_AGENT_JWT_SECRET?.trim() || process.env.BETTER_AUTH_SECRET?.trim();
+  return secret || null;
+}
+
+function base64UrlEncode(value: string) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function base64UrlDecode(value: string) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function signPayload(secret: string, signingInput: string) {
+  return createHmac("sha256", secret).update(signingInput).digest("base64url");
+}
+
+function safeCompare(a: string, b: string) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+function parseJson(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface MachineJwtClaims {
+  machineId: string;
+  ownerUserId: string;
+  type: "machine";
+  iat: number;
+  exp: number;
+  iss?: string;
+  aud?: string;
+}
+
+/** Generate a long-lived JWT for a machine (called when a machine redeems an invite). */
+export function generateMachineJwt(machineId: string, ownerUserId: string): string | null {
+  const secret = jwtSecret();
+  if (!secret) return null;
+
+  const issuer = process.env.PAPERCLIP_AGENT_JWT_ISSUER ?? "paperclip";
+  const audience = process.env.PAPERCLIP_AGENT_JWT_AUDIENCE ?? "paperclip-api";
+  const ttlSeconds = 60 * 60 * 24 * 365; // 1 year
+
+  const now = Math.floor(Date.now() / 1000);
+  const claims = {
+    machineId,
+    ownerUserId,
+    type: "machine" as const,
+    iat: now,
+    exp: now + ttlSeconds,
+    iss: issuer,
+    aud: audience,
+  };
+
+  const header = { alg: JWT_ALGORITHM, typ: "JWT" };
+  const signingInput = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(claims))}`;
+  const signature = signPayload(secret, signingInput);
+
+  return `${signingInput}.${signature}`;
+}
+
+/** Verify a machine JWT and return its claims, or null if invalid/expired. */
+export function verifyMachineJwt(token: string): MachineJwtClaims | null {
+  if (!token) return null;
+  const secret = jwtSecret();
+  if (!secret) return null;
+
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [headerB64, claimsB64, signature] = parts;
+
+  const header = parseJson(base64UrlDecode(headerB64!));
+  if (!header || header.alg !== JWT_ALGORITHM) return null;
+
+  const signingInput = `${headerB64}.${claimsB64}`;
+  const expectedSig = signPayload(secret, signingInput);
+  if (!safeCompare(signature!, expectedSig)) return null;
+
+  const claims = parseJson(base64UrlDecode(claimsB64!));
+  if (!claims) return null;
+
+  const machineId = typeof claims.machineId === "string" ? claims.machineId : null;
+  const ownerUserId = typeof claims.ownerUserId === "string" ? claims.ownerUserId : null;
+  const type = claims.type;
+  const iat = typeof claims.iat === "number" ? claims.iat : null;
+  const exp = typeof claims.exp === "number" ? claims.exp : null;
+  if (!machineId || !ownerUserId || type !== "machine" || !iat || !exp) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  if (exp < now) return null;
+
+  const issuer = typeof claims.iss === "string" ? claims.iss : undefined;
+  const audience = typeof claims.aud === "string" ? claims.aud : undefined;
+  const configIssuer = process.env.PAPERCLIP_AGENT_JWT_ISSUER ?? "paperclip";
+  const configAudience = process.env.PAPERCLIP_AGENT_JWT_AUDIENCE ?? "paperclip-api";
+  if (issuer && issuer !== configIssuer) return null;
+  if (audience && audience !== configAudience) return null;
+
+  return { machineId, ownerUserId, type: "machine", iat, exp, ...(issuer ? { iss: issuer } : {}), ...(audience ? { aud: audience } : {}) };
+}
+
+// ---------------------------------------------------------------------------
+// Connected machines registry
+// ---------------------------------------------------------------------------
+
+interface MachineConnection {
+  ws: WsSocket;
+  machineId: string;
+  ownerUserId: string;
+  companyIds: string[];
+}
+
+const connectedMachines = new Map<string, MachineConnection>();
+
+/** Timers for offline grace period (30 s after disconnect). */
+const offlineTimers = new Map<string, NodeJS.Timeout>();
+
+/** Pending adapter test promises keyed by `machineId::adapterType`. */
+const pendingAdapterTests = new Map<string, { resolve: (result: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function rejectUpgrade(socket: Duplex, statusLine: string, message: string) {
+  const safe = message.replace(/[\r\n]+/g, " ").trim();
+  socket.write(`HTTP/1.1 ${statusLine}\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\n${safe}`);
+  socket.destroy();
+}
+
+function parseMachinePath(pathname: string): boolean {
+  return pathname === "/ws/machines";
+}
+
+function parseTokenFromQuery(url: URL): string | null {
+  const token = url.searchParams.get("token")?.trim() ?? "";
+  return token.length > 0 ? token : null;
+}
+
+function safeParse(data: Buffer | string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(data.toString());
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket setup
+// ---------------------------------------------------------------------------
+
+export function setupMachineWebSocket(server: HttpServer, _db: Db) {
+  const wss = new WebSocketServer({ noServer: true });
+
+  wss.on("connection", (ws: WsSocket, req: IncomingMessage) => {
+    const claims = (req as any).__machineClaims as MachineJwtClaims | undefined;
+    const companyIds = ((req as any).__machineCompanyIds as string[] | undefined) ?? [];
+    if (!claims) {
+      ws.close(1008, "missing auth context");
+      return;
+    }
+
+    const { machineId, ownerUserId } = claims;
+
+    // Clear any pending offline timer for this machine
+    const existingTimer = offlineTimers.get(machineId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      offlineTimers.delete(machineId);
+    }
+
+    // Close any previous connection for the same machine (stale socket)
+    const prev = connectedMachines.get(machineId);
+    if (prev) {
+      logger.warn({ machineId }, "machine reconnected — closing previous socket");
+      prev.ws.close(1000, "replaced by new connection");
+    }
+
+    // Register connection
+    connectedMachines.set(machineId, { ws, machineId, ownerUserId, companyIds });
+
+    // TODO: set machine status to 'online' in DB once schema is ready
+    // await db.update(machines).set({ status: 'online', lastSeenAt: new Date() }).where(eq(machines.id, machineId));
+
+    logger.info({ machineId, ownerUserId, companyIds }, "machine connected");
+
+    // Send welcome message
+    ws.send(JSON.stringify({ type: "connected", machineId, companies: companyIds }));
+
+    // ------- message handler -------
+    ws.on("message", (data) => {
+      const msg = safeParse(data);
+      if (!msg) {
+        logger.warn({ machineId }, "machine sent non-JSON message — ignoring");
+        return;
+      }
+
+      const msgType = typeof msg.type === "string" ? msg.type : null;
+
+      switch (msgType) {
+        case "heartbeat": {
+          // Update machine status with resource metrics
+          const cpu = typeof msg.cpu === "number" ? msg.cpu : undefined;
+          const memory = typeof msg.memory === "number" ? msg.memory : undefined;
+          const adapters = Array.isArray(msg.adapters) ? msg.adapters : undefined;
+
+          logger.debug({ machineId, cpu, memory }, "machine heartbeat");
+
+          // TODO: persist to DB once schema is ready
+          // await db.update(machines).set({ status: 'online', cpu, memory, lastSeenAt: new Date() }).where(eq(machines.id, machineId));
+          // if (adapters) { for (const a of adapters) { upsert adapter status } }
+
+          ws.send(JSON.stringify({ type: "heartbeat_ack", ts: Date.now() }));
+          break;
+        }
+
+        case "task_update": {
+          const issueId = typeof msg.issueId === "string" ? msg.issueId : null;
+          const status = typeof msg.status === "string" ? msg.status : null;
+          if (!issueId || !status) {
+            logger.warn({ machineId, msg }, "machine task_update missing issueId or status");
+            break;
+          }
+
+          logger.info({ machineId, issueId, status }, "machine task update");
+
+          // TODO: update issue status in DB and log activity
+          break;
+        }
+
+        case "adapter_test_result": {
+          const adapterType = typeof msg.adapterType === "string" ? msg.adapterType : null;
+          if (!adapterType) break;
+
+          const key = `${machineId}::${adapterType}`;
+          const pending = pendingAdapterTests.get(key);
+          if (pending) {
+            clearTimeout(pending.timer);
+            pendingAdapterTests.delete(key);
+            pending.resolve(msg.result ?? { ok: true });
+          }
+          break;
+        }
+
+        default:
+          logger.warn({ machineId, type: msgType }, "machine sent unknown message type");
+      }
+    });
+
+    // ------- close handler -------
+    ws.on("close", () => {
+      logger.info({ machineId }, "machine disconnected — starting 30 s offline grace period");
+
+      // Start offline grace period
+      const timer = setTimeout(() => {
+        offlineTimers.delete(machineId);
+        connectedMachines.delete(machineId);
+
+        logger.info({ machineId }, "machine offline grace period expired — marking offline");
+
+        // TODO: set machine status to 'offline' in DB once schema is ready
+        // void db.update(machines).set({ status: 'offline' }).where(eq(machines.id, machineId));
+      }, 30_000);
+
+      offlineTimers.set(machineId, timer);
+    });
+
+    ws.on("error", (err) => {
+      logger.warn({ err, machineId }, "machine websocket client error");
+    });
+  });
+
+  // ------- Upgrade handler -------
+  server.on("upgrade", (req, socket, head) => {
+    if (!req.url) return; // let other upgrade handlers deal with it
+
+    const url = new URL(req.url, "http://localhost");
+    if (!parseMachinePath(url.pathname)) {
+      // Not our path — let other upgrade handlers (live-events) handle it
+      return;
+    }
+
+    const token = parseTokenFromQuery(url);
+    if (!token) {
+      rejectUpgrade(socket, "401 Unauthorized", "missing token");
+      return;
+    }
+
+    const claims = verifyMachineJwt(token);
+    if (!claims) {
+      rejectUpgrade(socket, "403 Forbidden", "invalid or expired token");
+      return;
+    }
+
+    // TODO: load machine from DB and resolve authorized companyIds
+    // For MVP, attach claims directly and let the connection handler proceed
+    const companyIds: string[] = []; // will be loaded from DB once schema is ready
+
+    (req as any).__machineClaims = claims;
+    (req as any).__machineCompanyIds = companyIds;
+
+    wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
+      wss.emit("connection", ws, req);
+    });
+  });
+
+  logger.info("Machine WebSocket server attached on /ws/machines");
+
+  return wss;
+}
+
+// ---------------------------------------------------------------------------
+// Public API — used by other server modules to interact with machines
+// ---------------------------------------------------------------------------
+
+/** Send a task dispatch to a specific connected machine. Returns false if the machine is not connected. */
+export function dispatchTaskToMachine(
+  machineId: string,
+  payload: {
+    issueId: string;
+    companyId: string;
+    agentConfig: unknown;
+    adapterType: string;
+    model: string;
+  },
+): boolean {
+  const conn = connectedMachines.get(machineId);
+  if (!conn || conn.ws.readyState !== 1 /* WebSocket.OPEN */) return false;
+  conn.ws.send(JSON.stringify({ type: "task_dispatch", ...payload }));
+  return true;
+}
+
+/** Send an adapter environment test to a machine and wait for the response (timeout 15 s). */
+export function sendAdapterTest(machineId: string, adapterType: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const conn = connectedMachines.get(machineId);
+    if (!conn || conn.ws.readyState !== 1) {
+      return reject(new Error(`Machine ${machineId} is not connected`));
+    }
+
+    const key = `${machineId}::${adapterType}`;
+
+    // Clean up any stale pending test for the same key
+    const existing = pendingAdapterTests.get(key);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.reject(new Error("superseded by new test request"));
+    }
+
+    const timer = setTimeout(() => {
+      pendingAdapterTests.delete(key);
+      reject(new Error(`Adapter test timed out for ${adapterType} on machine ${machineId}`));
+    }, 15_000);
+
+    pendingAdapterTests.set(key, { resolve, reject, timer });
+
+    conn.ws.send(JSON.stringify({ type: "adapter_test", adapterType }));
+  });
+}
+
+/** Get the list of currently connected machine IDs. */
+export function getConnectedMachineIds(): string[] {
+  return Array.from(connectedMachines.keys());
+}
+
+/** Check if a specific machine is currently connected. */
+export function isMachineConnected(machineId: string): boolean {
+  return connectedMachines.has(machineId);
+}

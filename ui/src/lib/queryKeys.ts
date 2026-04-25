@@ -170,6 +170,10 @@ export const queryKeys = {
     dashboard: (pluginId: string) => ["plugins", pluginId, "dashboard"] as const,
     logs: (pluginId: string) => ["plugins", pluginId, "logs"] as const,
   },
+  machines: {
+    list: (companyId: string) => ["machines", companyId] as const,
+    detail: (machineId: string) => ["machines", "detail", machineId] as const,
+  },
   adapters: {
     all: ["adapters"] as const,
   },

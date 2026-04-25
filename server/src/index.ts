@@ -28,6 +28,7 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
+import { setupMachineWebSocket } from "./realtime/machine-ws.js";
 import {
   feedbackService,
   heartbeatService,
@@ -654,6 +655,8 @@ export async function startServer(): Promise<StartedServer> {
     deploymentMode: config.deploymentMode,
     resolveSessionFromHeaders,
   });
+
+  setupMachineWebSocket(server, db as any);
 
   void reconcilePersistedRuntimeServicesOnStartup(db as any)
     .then((result) => {

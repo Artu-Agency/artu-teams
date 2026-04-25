@@ -38,6 +38,7 @@ import { llmRoutes } from "./routes/llms.js";
 import { authRoutes } from "./routes/auth.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
+import { machineRoutes } from "./routes/machines.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
@@ -281,6 +282,7 @@ export async function createApp(
       { workerManager },
     ),
   );
+  api.use(machineRoutes(db));
   api.use(adapterRoutes());
   api.use(
     accessRoutes(db, {
