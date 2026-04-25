@@ -126,7 +126,6 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins?
         defaultCookieAttributes: {
           sameSite: "none" as const,
           secure: true,
-          partitioned: true,
         },
       } : {}),
     },
