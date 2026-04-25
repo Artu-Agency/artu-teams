@@ -123,6 +123,11 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins?
           enabled: true,
           domain: process.env.PAPERCLIP_COOKIE_DOMAIN,
         },
+        defaultCookieAttributes: {
+          sameSite: "none" as const,
+          secure: true,
+          partitioned: true,
+        },
       } : {}),
     },
   };
