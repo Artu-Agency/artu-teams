@@ -365,9 +365,15 @@ export function setupMachineWebSocket(server: HttpServer, _db: Db) {
     (req as any).__machineClaims = claims;
     (req as any).__machineCompanyIds = companyIds;
 
-    wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
-      wss.emit("connection", ws, req);
-    });
+    try {
+      wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
+        logger.info({ machineId: claims.machineId }, "machine WS upgrade — handleUpgrade callback fired");
+        wss.emit("connection", ws, req);
+      });
+    } catch (err) {
+      logger.error({ err }, "machine WS upgrade — handleUpgrade threw");
+      socket.destroy();
+    }
   });
 
   logger.info("Machine WebSocket server attached on /ws/machines");
