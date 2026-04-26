@@ -4117,6 +4117,25 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     for (const { run, adapterType, adapterConfig } of activeRuns) {
       if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
 
+      // Machine-dispatched runs: check if the assigned machine is still connected
+      const resultJson = parseObject(run.resultJson);
+      const machineId = typeof resultJson.machineId === "string" ? resultJson.machineId : null;
+      if (machineId) {
+        const { isMachineConnected } = await import("../realtime/machine-ws.js");
+        if (isMachineConnected(machineId)) {
+          // Machine is still online — this run is legitimate, skip it
+          continue;
+        }
+        // Machine is offline — re-queue the run so another machine can pick it up
+        logger.warn({ runId: run.id, machineId }, "boot recovery: machine-dispatched run has offline machine — re-queuing");
+        await setRunStatus(run.id, "queued", {
+          error: "Machine disconnected — re-queued (boot recovery)",
+          resultJson: { ...resultJson, machineId: null },
+        });
+        reaped.push(run.id);
+        continue;
+      }
+
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
         const refTime = run.updatedAt ? new Date(run.updatedAt).getTime() : 0;
