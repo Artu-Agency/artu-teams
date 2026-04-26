@@ -28,6 +28,7 @@ import {
   companyMemberships,
   companySkills,
   documents,
+  machineCompanies,
 } from "@paperclipai/db";
 import { notFound, unprocessable } from "../errors.js";
 import { environmentService } from "./environments.js";
@@ -159,7 +160,25 @@ export function companyService(db: Db) {
     list: async () => {
       const rows = await getCompanyQuery(db);
       const hydrated = await hydrateCompanySpend(rows);
-      return hydrated.map((row) => enrichCompany(row));
+
+      // Hydrate machine counts in a single query
+      const companyIds = hydrated.map((r) => r.id);
+      const machineCounts = companyIds.length > 0
+        ? await db
+            .select({
+              companyId: machineCompanies.companyId,
+              machineCount: sql<number>`count(*)::int`,
+            })
+            .from(machineCompanies)
+            .where(inArray(machineCompanies.companyId, companyIds))
+            .groupBy(machineCompanies.companyId)
+        : [];
+      const machineCountMap = new Map(machineCounts.map((r) => [r.companyId, r.machineCount]));
+
+      return hydrated.map((row) => ({
+        ...enrichCompany(row),
+        machineCount: machineCountMap.get(row.id) ?? 0,
+      }));
     },
 
     getById: async (id: string) => {

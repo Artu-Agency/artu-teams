@@ -457,7 +457,6 @@ export function OnboardingWizard() {
     queryKey: queryKeys.machines.list(createdCompanyId!),
     queryFn: () => machinesApi.list(createdCompanyId!),
     enabled: !!createdCompanyId && step === 2 && !!machineInviteToken,
-    refetchInterval: 3000,
   });
 
   // Detect new machine connection
@@ -722,7 +721,7 @@ export function OnboardingWizard() {
           >
             <div className="w-full max-w-md mx-auto my-auto px-8 py-12 shrink-0">
               {/* Progress tabs */}
-              <div className="flex items-center gap-0 mb-8 border-b border-border">
+              <div className="flex items-center gap-0 mb-8 border-b border-border overflow-x-auto scrollbar-none">
                 {(
                   [
                     { step: 1 as Step, label: "Company", icon: Building2 },
@@ -737,7 +736,7 @@ export function OnboardingWizard() {
                     type="button"
                     onClick={() => setStep(s)}
                     className={cn(
-                      "flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer",
+                      "flex items-center gap-1.5 px-2 sm:px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer whitespace-nowrap shrink-0",
                       s === step
                         ? "border-foreground text-foreground"
                         : "border-transparent text-muted-foreground hover:text-foreground/70 hover:border-border"

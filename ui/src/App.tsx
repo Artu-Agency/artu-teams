@@ -200,6 +200,11 @@ function CompanyRootRedirect() {
     return <NoCompaniesStartPage />;
   }
 
+  // If company has no machines, redirect to onboarding step 2 (Machine)
+  if (targetCompany.machineCount === 0) {
+    return <Navigate to={`/${targetCompany.issuePrefix}/onboarding`} replace />;
+  }
+
   return <Navigate to={`/${targetCompany.issuePrefix}/dashboard`} replace />;
 }
 

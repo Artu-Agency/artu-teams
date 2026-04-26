@@ -9,16 +9,16 @@ import {
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Company } from "@paperclipai/shared";
-import { companiesApi } from "../api/companies";
+import { companiesApi, type CompanyWithMachines } from "../api/companies";
 import { ApiError } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";
 import type { CompanySelectionSource } from "../lib/company-selection";
 type CompanySelectionOptions = { source?: CompanySelectionSource };
 
 interface CompanyContextValue {
-  companies: Company[];
+  companies: CompanyWithMachines[];
   selectedCompanyId: string | null;
-  selectedCompany: Company | null;
+  selectedCompany: CompanyWithMachines | null;
   selectionSource: CompanySelectionSource;
   loading: boolean;
   error: Error | null;

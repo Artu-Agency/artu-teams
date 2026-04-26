@@ -3,7 +3,10 @@ import type { IncomingMessage, Server as HttpServer } from "node:http";
 import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
 import type { Db } from "@paperclipai/db";
+import { machines, machineCompanies, machineAdapters } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
 import { logger } from "../middleware/logger.js";
+import { publishLiveEvent } from "../services/live-events.js";
 
 // ---------------------------------------------------------------------------
 // ws library (CJS compat, same pattern as live-events-ws.ts)
@@ -207,7 +210,7 @@ function safeParse(data: Buffer | string): Record<string, unknown> | null {
 // WebSocket setup
 // ---------------------------------------------------------------------------
 
-export function setupMachineWebSocket(server: HttpServer, _db: Db) {
+export function setupMachineWebSocket(server: HttpServer, db: Db) {
   const wss = new WebSocketServer({ noServer: true });
 
   wss.on("connection", (ws: WsSocket, req: IncomingMessage) => {
@@ -237,8 +240,25 @@ export function setupMachineWebSocket(server: HttpServer, _db: Db) {
     // Register connection
     connectedMachines.set(machineId, { ws, machineId, ownerUserId, companyIds });
 
-    // TODO: set machine status to 'online' in DB once schema is ready
-    // await db.update(machines).set({ status: 'online', lastSeenAt: new Date() }).where(eq(machines.id, machineId));
+    // Persist online status to DB and publish live events
+    void (async () => {
+      try {
+        await db
+          .update(machines)
+          .set({ status: "online", lastSeenAt: new Date() })
+          .where(eq(machines.id, machineId));
+
+        for (const companyId of companyIds) {
+          publishLiveEvent({
+            companyId,
+            type: "machine.status",
+            payload: { machineId, status: "online" },
+          });
+        }
+      } catch (err) {
+        logger.error({ err, machineId }, "failed to persist machine online status");
+      }
+    })();
 
     logger.info({ machineId, ownerUserId, companyIds }, "machine connected");
 
@@ -264,9 +284,40 @@ export function setupMachineWebSocket(server: HttpServer, _db: Db) {
 
           logger.debug({ machineId, cpu, memory }, "machine heartbeat");
 
-          // TODO: persist to DB once schema is ready
-          // await db.update(machines).set({ status: 'online', cpu, memory, lastSeenAt: new Date() }).where(eq(machines.id, machineId));
-          // if (adapters) { for (const a of adapters) { upsert adapter status } }
+          // Persist metrics to DB (fire-and-forget)
+          void (async () => {
+            try {
+              await db
+                .update(machines)
+                .set({
+                  cpuUsage: cpu ?? undefined,
+                  memoryUsage: memory ?? undefined,
+                  lastSeenAt: new Date(),
+                })
+                .where(eq(machines.id, machineId));
+
+              if (adapters && adapters.length > 0) {
+                // Delete existing adapters and re-insert (same pattern as machineService.updateMachineAdapters)
+                await db
+                  .delete(machineAdapters)
+                  .where(eq(machineAdapters.machineId, machineId));
+
+                await db.insert(machineAdapters).values(
+                  adapters.map((a: any) => ({
+                    machineId,
+                    adapterType: typeof a.type === "string" ? a.type : "unknown",
+                    status: typeof a.status === "string" ? a.status : "available",
+                    model: typeof a.model === "string" ? a.model : null,
+                    version: typeof a.version === "string" ? a.version : null,
+                    currentTaskId: typeof a.currentTaskId === "string" ? a.currentTaskId : null,
+                    updatedAt: new Date(),
+                  })),
+                );
+              }
+            } catch (err) {
+              logger.error({ err, machineId }, "failed to persist heartbeat metrics");
+            }
+          })();
 
           ws.send(JSON.stringify({ type: "heartbeat_ack", ts: Date.now() }));
           break;
@@ -316,8 +367,25 @@ export function setupMachineWebSocket(server: HttpServer, _db: Db) {
 
         logger.info({ machineId }, "machine offline grace period expired — marking offline");
 
-        // TODO: set machine status to 'offline' in DB once schema is ready
-        // void db.update(machines).set({ status: 'offline' }).where(eq(machines.id, machineId));
+        // Persist offline status and publish live events
+        void (async () => {
+          try {
+            await db
+              .update(machines)
+              .set({ status: "offline" })
+              .where(eq(machines.id, machineId));
+
+            for (const cId of companyIds) {
+              publishLiveEvent({
+                companyId: cId,
+                type: "machine.status",
+                payload: { machineId, status: "offline" },
+              });
+            }
+          } catch (err) {
+            logger.error({ err, machineId }, "failed to persist machine offline status");
+          }
+        })();
       }, 30_000);
 
       offlineTimers.set(machineId, timer);
@@ -358,22 +426,28 @@ export function setupMachineWebSocket(server: HttpServer, _db: Db) {
 
     logger.info({ machineId: claims.machineId }, "machine WS upgrade — JWT valid, upgrading");
 
-    // TODO: load machine from DB and resolve authorized companyIds
-    // For MVP, attach claims directly and let the connection handler proceed
-    const companyIds: string[] = []; // will be loaded from DB once schema is ready
+    // Load companyIds from DB before upgrading (async in sync handler)
+    void (async () => {
+      try {
+        const rows = await db
+          .select({ companyId: machineCompanies.companyId })
+          .from(machineCompanies)
+          .where(eq(machineCompanies.machineId, claims.machineId));
 
-    (req as any).__machineClaims = claims;
-    (req as any).__machineCompanyIds = companyIds;
+        const companyIds = rows.map((r) => r.companyId);
 
-    try {
-      wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
-        logger.info({ machineId: claims.machineId }, "machine WS upgrade — handleUpgrade callback fired");
-        wss.emit("connection", ws, req);
-      });
-    } catch (err) {
-      logger.error({ err }, "machine WS upgrade — handleUpgrade threw");
-      socket.destroy();
-    }
+        (req as any).__machineClaims = claims;
+        (req as any).__machineCompanyIds = companyIds;
+
+        wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
+          logger.info({ machineId: claims.machineId }, "machine WS upgrade — handleUpgrade callback fired");
+          wss.emit("connection", ws, req);
+        });
+      } catch (err) {
+        logger.error({ err, machineId: claims.machineId }, "machine WS upgrade — failed to load companyIds or upgrade");
+        rejectUpgrade(socket, "500 Internal Server Error", "internal error");
+      }
+    })();
   });
 
   logger.info("Machine WebSocket server attached on /ws/machines");

@@ -50,7 +50,6 @@ export function AddMachineModal({ open, onOpenChange }: AddMachineModalProps) {
     queryKey: queryKeys.machines.list(selectedCompanyId!),
     queryFn: () => machinesApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId && open && !!inviteMutation.data,
-    refetchInterval: 3000,
   });
 
   // Track initial count and detect new machines

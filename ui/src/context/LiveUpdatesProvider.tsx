@@ -828,6 +828,24 @@ function handleLiveEvent(
     return;
   }
 
+  if (event.type === "machine.status") {
+    queryClient.invalidateQueries({ queryKey: queryKeys.machines.list(expectedCompanyId) });
+    const status = readString(payload.status);
+    const machineId = readString(payload.machineId);
+    if (status === "online") {
+      gatedPushToast(gate, pushToast, "machine-status", {
+        tone: "success" as const,
+        title: "Machine connected",
+      });
+    } else if (status === "offline") {
+      gatedPushToast(gate, pushToast, "machine-status", {
+        tone: "info" as const,
+        title: "Machine disconnected",
+      });
+    }
+    return;
+  }
+
   if (event.type === "activity.logged") {
     invalidateActivityQueries(queryClient, expectedCompanyId, payload, currentActor, { pathname });
     if (shouldDeferVisibleIssueCommentActivity(queryClient, pathname, payload)) {

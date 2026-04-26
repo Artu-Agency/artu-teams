@@ -11,10 +11,13 @@ import type {
 } from "@paperclipai/shared";
 import { api } from "./client";
 
+/** Company with machine count — returned by list endpoint */
+export type CompanyWithMachines = Company & { machineCount: number };
+
 export type CompanyStats = Record<string, { agentCount: number; issueCount: number }>;
 
 export const companiesApi = {
-  list: () => api.get<Company[]>("/companies"),
+  list: () => api.get<CompanyWithMachines[]>("/companies"),
   get: (companyId: string) => api.get<Company>(`/companies/${companyId}`),
   stats: () => api.get<CompanyStats>("/companies/stats"),
   create: (data: {

@@ -8,6 +8,7 @@ ui/storybook-static/
 *.tsbuildinfo
 drizzle/meta/
 .vite/
+docs/superpowers/
 coverage/
 .DS_Store
 data/

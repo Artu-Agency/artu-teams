@@ -830,8 +830,8 @@ export function IssuesList({
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-between gap-2 sm:gap-3">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+      <div className="flex items-center justify-between gap-2 sm:gap-3 overflow-x-auto scrollbar-none">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3 shrink-0">
           <Button size="sm" variant="outline" onClick={() => openCreateIssueDialog()}>
             <Plus className="h-4 w-4 sm:mr-1" />
             <span className="hidden sm:inline">{createButtonLabel}</span>

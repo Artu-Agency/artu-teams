@@ -20,7 +20,6 @@ export function Machines() {
     queryKey: queryKeys.machines.list(selectedCompanyId!),
     queryFn: () => machinesApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
-    refetchInterval: 5000,
   });
 
   useEffect(() => {
