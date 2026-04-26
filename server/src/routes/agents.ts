@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
+import { logger } from "../middleware/logger.js";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
@@ -952,10 +953,27 @@ export function agentRoutes(
       const type = assertKnownAdapterType(req.params.type as string);
       await assertCanReadConfigurations(req, companyId);
 
-      const adapter = requireServerAdapter(type);
-
       const inputAdapterConfig =
         (req.body?.adapterConfig ?? {}) as Record<string, unknown>;
+
+      // Try to run the test on a connected machine via WebSocket first
+      const { findConnectedMachineForCompany, sendAdapterTest } = await import("../realtime/machine-ws.js");
+      const machineId = findConnectedMachineForCompany(companyId);
+
+      if (machineId) {
+        try {
+          const result = await sendAdapterTest(machineId, type, inputAdapterConfig);
+          res.json(result);
+          return;
+        } catch (err) {
+          // Machine test failed (timeout, disconnect) — fall through to server-side test
+          logger.warn({ err, machineId, adapterType: type }, "machine adapter test failed, falling back to server-side");
+        }
+      }
+
+      // Fallback: run test locally on server (works for non-local adapters or when no machine connected)
+      const adapter = requireServerAdapter(type);
+
       const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
         companyId,
         inputAdapterConfig,

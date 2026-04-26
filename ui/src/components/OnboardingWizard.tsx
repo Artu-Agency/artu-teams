@@ -1405,7 +1405,8 @@ export function OnboardingWizard() {
                     <Button
                       size="sm"
                       disabled={
-                        !agentName.trim() || loading || adapterEnvLoading
+                        !agentName.trim() || loading || adapterEnvLoading ||
+                        (isLocalAdapter && adapterEnvResult?.status !== "pass")
                       }
                       onClick={handleStep3Next}
                     >

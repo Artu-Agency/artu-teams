@@ -476,8 +476,12 @@ export function dispatchTaskToMachine(
   return true;
 }
 
-/** Send an adapter environment test to a machine and wait for the response (timeout 15 s). */
-export function sendAdapterTest(machineId: string, adapterType: string): Promise<unknown> {
+/** Send an adapter environment test to a machine and wait for the response (timeout 45 s). */
+export function sendAdapterTest(
+  machineId: string,
+  adapterType: string,
+  adapterConfig?: Record<string, unknown>,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const conn = connectedMachines.get(machineId);
     if (!conn || conn.ws.readyState !== 1) {
@@ -496,11 +500,11 @@ export function sendAdapterTest(machineId: string, adapterType: string): Promise
     const timer = setTimeout(() => {
       pendingAdapterTests.delete(key);
       reject(new Error(`Adapter test timed out for ${adapterType} on machine ${machineId}`));
-    }, 15_000);
+    }, 45_000);
 
     pendingAdapterTests.set(key, { resolve, reject, timer });
 
-    conn.ws.send(JSON.stringify({ type: "adapter_test", adapterType }));
+    conn.ws.send(JSON.stringify({ type: "adapter_test", adapterType, adapterConfig }));
   });
 }
 
@@ -512,4 +516,14 @@ export function getConnectedMachineIds(): string[] {
 /** Check if a specific machine is currently connected. */
 export function isMachineConnected(machineId: string): boolean {
   return connectedMachines.has(machineId);
+}
+
+/** Find a connected machine for a given company. Returns the first online machine ID or null. */
+export function findConnectedMachineForCompany(companyId: string): string | null {
+  for (const [machineId, conn] of connectedMachines) {
+    if (conn.companyIds.includes(companyId) && conn.ws.readyState === 1) {
+      return machineId;
+    }
+  }
+  return null;
 }
