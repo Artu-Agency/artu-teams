@@ -129,7 +129,7 @@ export function MachineCard({ machine }: MachineCardProps) {
         )}
 
         {/* Adapters */}
-        {machine.adapters.length > 0 && (
+        {machine.adapters && machine.adapters.length > 0 && (
           <div className="space-y-1">
             <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground/60">
               Adapters

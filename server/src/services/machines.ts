@@ -35,7 +35,26 @@ export function machineService(db: Db) {
       .innerJoin(machines, eq(machines.id, machineCompanies.machineId))
       .where(eq(machineCompanies.companyId, companyId));
 
-    return rows;
+    // Load adapters for each machine
+    const machineIds = rows.map((r) => r.id);
+    const allAdapters = machineIds.length > 0
+      ? await db
+          .select()
+          .from(machineAdapters)
+          .where(sql`${machineAdapters.machineId} = ANY(${machineIds})`)
+      : [];
+
+    const adaptersByMachine = new Map<string, typeof allAdapters>();
+    for (const adapter of allAdapters) {
+      const list = adaptersByMachine.get(adapter.machineId) ?? [];
+      list.push(adapter);
+      adaptersByMachine.set(adapter.machineId, list);
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      adapters: adaptersByMachine.get(row.id) ?? [],
+    }));
   }
 
   /**
