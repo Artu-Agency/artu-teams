@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { EventEmitter } from "node:events";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
@@ -174,6 +175,14 @@ const connectedMachines = new Map<string, MachineConnection>();
 
 /** Timers for offline grace period (30 s after disconnect). */
 const offlineTimers = new Map<string, NodeJS.Timeout>();
+
+/** Timers for dispatch ACK timeout (10s after dispatch). */
+const dispatchTimers = new Map<string, NodeJS.Timeout>();
+
+/** Event emitter for task lifecycle events (decouples machine-ws from heartbeat logic). */
+const machineTaskEmitter = new EventEmitter();
+machineTaskEmitter.setMaxListeners(0);
+export { machineTaskEmitter };
 
 /** Pending adapter test promises keyed by `machineId::adapterType`. */
 const pendingAdapterTests = new Map<string, { resolve: (result: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
@@ -351,6 +360,54 @@ export function setupMachineWebSocket(server: HttpServer, db: Db) {
           break;
         }
 
+        case "task_ack": {
+          const runId = typeof msg.runId === "string" ? msg.runId : null;
+          if (!runId) break;
+          logger.info({ machineId, runId }, "machine acknowledged task dispatch");
+
+          // Cancel dispatch timeout
+          const timerKey = `dispatch::${runId}`;
+          const pendingTimer = dispatchTimers.get(timerKey);
+          if (pendingTimer) {
+            clearTimeout(pendingTimer);
+            dispatchTimers.delete(timerKey);
+          }
+
+          // Emit event for heartbeat service to mark run as 'running'
+          machineTaskEmitter.emit("task_ack", { machineId, runId });
+          break;
+        }
+
+        case "task_result": {
+          const runId = typeof msg.runId === "string" ? msg.runId : null;
+          if (!runId) break;
+          const exitCode = typeof msg.exitCode === "number" ? msg.exitCode : null;
+          const stdout = typeof msg.stdout === "string" ? msg.stdout : "";
+          const stderr = typeof msg.stderr === "string" ? msg.stderr : "";
+          logger.info({ machineId, runId, exitCode }, "machine reported task result");
+
+          machineTaskEmitter.emit("task_result", { machineId, runId, exitCode, stdout, stderr });
+          break;
+        }
+
+        case "task_progress": {
+          const runId = typeof msg.runId === "string" ? msg.runId : null;
+          if (!runId) break;
+          const log = typeof msg.log === "string" ? msg.log : "";
+
+          machineTaskEmitter.emit("task_progress", { machineId, runId, log });
+          break;
+        }
+
+        case "task_busy": {
+          const runId = typeof msg.runId === "string" ? msg.runId : null;
+          if (!runId) break;
+          logger.info({ machineId, runId }, "machine busy, cannot accept task");
+
+          machineTaskEmitter.emit("task_busy", { machineId, runId });
+          break;
+        }
+
         default:
           logger.warn({ machineId, type: msgType }, "machine sent unknown message type");
       }
@@ -366,6 +423,9 @@ export function setupMachineWebSocket(server: HttpServer, db: Db) {
         connectedMachines.delete(machineId);
 
         logger.info({ machineId }, "machine offline grace period expired — marking offline");
+
+        // Re-queue any runs dispatched/running on this machine
+        machineTaskEmitter.emit("machine_lost", { machineId, companyIds });
 
         // Persist offline status and publish live events
         void (async () => {
@@ -526,4 +586,50 @@ export function findConnectedMachineForCompany(companyId: string): string | null
     }
   }
   return null;
+}
+
+/** Dispatch a task to a machine AND set a 10 s ACK timeout. Returns false if machine is not connected. */
+export function dispatchTaskToMachineWithTimeout(
+  machineId: string,
+  payload: {
+    runId: string;
+    issueId: string;
+    companyId: string;
+    agentId: string;
+    adapterType: string;
+    adapterConfig: Record<string, unknown>;
+    prompt: string;
+    timeoutSec: number;
+  },
+  onTimeout: () => void,
+): boolean {
+  const conn = connectedMachines.get(machineId);
+  if (!conn || conn.ws.readyState !== 1) return false;
+
+  try {
+    conn.ws.send(JSON.stringify({ type: "task_dispatch", ...payload }));
+  } catch (err) {
+    logger.error({ err, machineId, runId: payload.runId }, "failed to send task_dispatch");
+    return false;
+  }
+
+  // Set dispatch ACK timeout (10s)
+  const timerKey = `dispatch::${payload.runId}`;
+  const existing = dispatchTimers.get(timerKey);
+  if (existing) clearTimeout(existing);
+
+  const timer = setTimeout(() => {
+    dispatchTimers.delete(timerKey);
+    logger.warn({ machineId, runId: payload.runId }, "dispatch ACK timeout — re-queuing");
+    onTimeout();
+  }, 10_000);
+
+  dispatchTimers.set(timerKey, timer);
+  return true;
+}
+
+/** Get companyIds for a connected machine */
+export function getConnectedMachineCompanyIds(machineId: string): string[] {
+  const conn = connectedMachines.get(machineId);
+  return conn?.companyIds ?? [];
 }

@@ -5215,283 +5215,182 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         });
       };
 
-      const adapter = getServerAdapter(agent.adapterType);
-      const authToken = adapter.supportsLocalAgentJwt
-        ? createLocalAgentJwt(agent.id, agent.companyId, agent.adapterType, run.id)
-        : null;
-      if (adapter.supportsLocalAgentJwt && !authToken) {
-        logger.warn(
-          {
-            companyId: agent.companyId,
-            agentId: agent.id,
-            runId: run.id,
-            adapterType: agent.adapterType,
-          },
-          "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
-        );
+      // -----------------------------------------------------------------------
+      // Machine dispatch: run adapter on connected machine via WebSocket
+      // -----------------------------------------------------------------------
+      const { findConnectedMachineForCompany, dispatchTaskToMachineWithTimeout, machineTaskEmitter } =
+        await import("../realtime/machine-ws.js");
+
+      const targetMachineId = findConnectedMachineForCompany(agent.companyId);
+
+      if (!targetMachineId) {
+        // No machine available — fail the run with clear error
+        await setRunStatus(run.id, "failed", {
+          finishedAt: new Date(),
+          error: "No machine connected. Connect one with: npx artu-teams connect --server <url> --token <token>",
+          errorCode: "no_machine",
+        });
+        await setWakeupStatus(run.wakeupRequestId, "failed", {
+          finishedAt: new Date(),
+          error: "No machine connected",
+        });
+        await finalizeAgentStatus(agent.id, "failed");
+        activeRunExecutions.delete(run.id);
+        return;
       }
-      const adapterResult = await adapter.execute({
-        runId: run.id,
-        agent,
-        runtime: runtimeForAdapter,
-        config: runtimeConfig,
-        context,
-        executionTarget,
-        executionTransport: remoteExecution
-          ? { remoteExecution: remoteExecution as unknown as Record<string, unknown> }
-          : undefined,
-        onLog,
-        onMeta: onAdapterMeta,
-        onSpawn: async (meta) => {
-          await persistRunProcessMetadata(run.id, {
-            pid: meta.pid,
-            processGroupId:
-              "processGroupId" in meta && typeof meta.processGroupId === "number"
-                ? meta.processGroupId
-                : null,
-            startedAt: meta.startedAt,
-          });
+
+      // Build prompt from assembled context
+      const dispatchPrompt = typeof context.paperclipTaskMarkdown === "string"
+        ? context.paperclipTaskMarkdown
+        : `Task for agent ${agent.name}`;
+
+      const adapterConfigForDispatch = parseObject(agent.adapterConfig);
+      const dispatchTimeoutSec = typeof adapterConfigForDispatch.timeoutSec === "number" && adapterConfigForDispatch.timeoutSec > 0
+        ? adapterConfigForDispatch.timeoutSec
+        : 300;
+
+      const dispatched = dispatchTaskToMachineWithTimeout(
+        targetMachineId,
+        {
+          runId: run.id,
+          issueId: issueId ?? "",
+          companyId: agent.companyId,
+          agentId: agent.id,
+          adapterType: agent.adapterType,
+          adapterConfig: adapterConfigForDispatch,
+          prompt: dispatchPrompt,
+          timeoutSec: dispatchTimeoutSec,
         },
-        authToken: authToken ?? undefined,
-      });
-      const adapterManagedRuntimeServices = adapterResult.runtimeServices
-        ? await persistAdapterManagedRuntimeServices({
-            db,
-            adapterType: agent.adapterType,
-            runId: run.id,
-            agent: {
-              id: agent.id,
-              name: agent.name,
-              companyId: agent.companyId,
-            },
-            issue: issueRef,
-            workspace: executionWorkspace,
-            reports: adapterResult.runtimeServices,
-          })
-        : [];
-      if (adapterManagedRuntimeServices.length > 0) {
-        const combinedRuntimeServices = [
-          ...runtimeServices,
-          ...adapterManagedRuntimeServices,
-        ];
-        context.paperclipRuntimeServices = combinedRuntimeServices;
-        context.paperclipRuntimePrimaryUrl =
-          combinedRuntimeServices.find((service) => readNonEmptyString(service.url))?.url ?? null;
-        await db
-          .update(heartbeatRuns)
-          .set({
-            contextSnapshot: context,
-            updatedAt: new Date(),
-          })
-          .where(eq(heartbeatRuns.id, run.id));
-        if (issueId) {
-          try {
-            await issuesSvc.addComment(
-              issueId,
-              buildWorkspaceReadyComment({
-                workspace: executionWorkspace,
-                runtimeServices: adapterManagedRuntimeServices,
-              }),
-              { agentId: agent.id, runId: run.id },
-            );
-          } catch (err) {
-            await onLog(
-              "stderr",
-              `[paperclip] Failed to post adapter-managed runtime comment: ${err instanceof Error ? err.message : String(err)}\n`,
-            );
-          }
-        }
-      }
-      const nextSessionState = resolveNextSessionState({
-        codec: sessionCodec,
-        adapterResult,
-        previousParams: previousSessionParams,
-        previousDisplayId: runtimeForAdapter.sessionDisplayId,
-        previousLegacySessionId: runtimeForAdapter.sessionId,
-      });
-      const rawUsage = normalizeUsageTotals(adapterResult.usage);
-      const sessionUsageResolution = await resolveNormalizedUsageForSession({
-        agentId: agent.id,
-        runId: run.id,
-        sessionId: nextSessionState.displayId ?? nextSessionState.legacySessionId,
-        rawUsage,
-      });
-      const normalizedUsage = sessionUsageResolution.normalizedUsage;
-
-      let outcome: "succeeded" | "failed" | "cancelled" | "timed_out";
-      const latestRun = await getRun(run.id);
-      if (isHeartbeatRunTerminalStatus(latestRun?.status)) {
-        outcome = latestRun.status;
-      } else if (adapterResult.timedOut) {
-        outcome = "timed_out";
-      } else if ((adapterResult.exitCode ?? 0) === 0 && !adapterResult.errorMessage) {
-        outcome = "succeeded";
-      } else {
-        outcome = "failed";
-      }
-      const runErrorMessage =
-        outcome === "cancelled"
-          ? (latestRun?.error ?? adapterResult.errorMessage ?? "Cancelled")
-          : outcome === "succeeded"
-            ? null
-            : redactCurrentUserText(
-                adapterResult.errorMessage ?? (outcome === "timed_out" ? "Timed out" : "Adapter failed"),
-                currentUserRedactionOptions,
-              );
-      const runErrorCode =
-        outcome === "timed_out"
-          ? "timeout"
-          : outcome === "cancelled"
-            ? (latestRun?.errorCode ?? "cancelled")
-            : outcome === "failed"
-              ? (adapterResult.errorCode ?? "adapter_failed")
-              : null;
-
-      let logSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;
-      if (handle) {
-        logSummary = await runLogStore.finalize(handle);
-      }
-      const finalLogBytes = logSummary?.bytes;
-      if (outputProgressState.pending && typeof finalLogBytes === "number") {
-        outputProgressState.pending.bytes = finalLogBytes;
-      }
-      await flushOutputProgress({ force: true });
-
-      const status =
-        outcome === "succeeded"
-          ? "succeeded"
-          : outcome === "cancelled"
-            ? "cancelled"
-            : outcome === "timed_out"
-              ? "timed_out"
-              : "failed";
-
-      const usageJson =
-        normalizedUsage || adapterResult.costUsd != null
-          ? ({
-              ...(normalizedUsage ?? {}),
-              ...(rawUsage ? {
-                rawInputTokens: rawUsage.inputTokens,
-                rawCachedInputTokens: rawUsage.cachedInputTokens,
-                rawOutputTokens: rawUsage.outputTokens,
-              } : {}),
-              ...(sessionUsageResolution.derivedFromSessionTotals ? { usageSource: "session_delta" } : {}),
-              ...((nextSessionState.displayId ?? nextSessionState.legacySessionId)
-                ? { persistedSessionId: nextSessionState.displayId ?? nextSessionState.legacySessionId }
-                : {}),
-              sessionReused: runtimeForAdapter.sessionId != null || runtimeForAdapter.sessionDisplayId != null,
-              taskSessionReused: taskSessionForRun != null,
-              freshSession: runtimeForAdapter.sessionId == null && runtimeForAdapter.sessionDisplayId == null,
-              sessionRotated: sessionCompaction.rotate,
-              sessionRotationReason: sessionCompaction.reason,
-              provider: readNonEmptyString(adapterResult.provider) ?? "unknown",
-              biller: resolveLedgerBiller(adapterResult),
-              model: readNonEmptyString(adapterResult.model) ?? "unknown",
-              ...(adapterResult.costUsd != null ? { costUsd: adapterResult.costUsd } : {}),
-              billingType: normalizeLedgerBillingType(adapterResult.billingType),
-            } as Record<string, unknown>)
-          : null;
-
-      const persistedResultJson = mergeHeartbeatRunResultJson(
-        mergeRunStopMetadataForAgent(agent, outcome, {
-          resultJson: mergeAdapterRecoveryMetadata({
-            resultJson: adapterResult.resultJson ?? null,
-            errorFamily: adapterResult.errorFamily ?? null,
-            retryNotBefore: adapterResult.retryNotBefore ?? null,
-          }),
-          errorCode: runErrorCode,
-          errorMessage: runErrorMessage,
-        }),
-        adapterResult.summary ?? null,
+        () => {
+          // onTimeout callback: re-queue the run
+          void (async () => {
+            try {
+              await setRunStatus(run.id, "queued", { error: "Dispatch ACK timeout — re-queued" });
+              logger.warn({ runId: run.id, machineId: targetMachineId }, "dispatch timeout — run re-queued");
+              void startNextQueuedRunForAgent(agent.id);
+            } catch (timeoutErr) {
+              logger.error({ err: timeoutErr, runId: run.id }, "failed to re-queue run after dispatch timeout");
+            }
+          })();
+        },
       );
 
-      let persistedRun = await setRunStatus(run.id, status, {
-        finishedAt: new Date(),
-        error: runErrorMessage,
-        errorCode: runErrorCode,
-        exitCode: adapterResult.exitCode,
-        signal: adapterResult.signal,
-        usageJson,
-        resultJson: persistedResultJson,
-        sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
-        stdoutExcerpt,
-        stderrExcerpt,
-        logBytes: logSummary?.bytes,
-        logSha256: logSummary?.sha256,
-        logCompressed: logSummary?.compressed ?? false,
-      });
-      if (persistedRun) {
-        persistedRun = await classifyAndPersistRunLiveness(persistedRun, persistedResultJson) ?? persistedRun;
-      }
-
-      await setWakeupStatus(run.wakeupRequestId, outcome === "succeeded" ? "completed" : status, {
-        finishedAt: new Date(),
-        error: runErrorMessage,
-      });
-
-      const finalizedRun = persistedRun ?? (await getRun(run.id));
-      if (finalizedRun) {
-        await appendRunEvent(finalizedRun, seq++, {
-          eventType: "lifecycle",
-          stream: "system",
-          level: outcome === "succeeded" ? "info" : "error",
-          message: `run ${outcome}`,
-          payload: {
-            status,
-            exitCode: adapterResult.exitCode,
-          },
+      if (!dispatched) {
+        // Machine went offline between check and send
+        await setRunStatus(run.id, "failed", {
+          finishedAt: new Date(),
+          error: "Machine went offline before task could be dispatched",
+          errorCode: "no_machine",
         });
-        const livenessRun = finalizedRun;
-        await refreshContinuationSummaryForRun(livenessRun, agent);
-        if (issueId && outcome === "succeeded") {
-          try {
-            const existingRunComment = await findRunIssueComment(livenessRun.id, livenessRun.companyId, issueId);
-            if (!existingRunComment) {
-              const issueComment = buildHeartbeatRunIssueComment(persistedResultJson);
-              if (issueComment) {
-                await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: livenessRun.id });
-              }
-            }
-          } catch (err) {
-            await onLog(
-              "stderr",
-              `[paperclip] Failed to post run summary comment: ${err instanceof Error ? err.message : String(err)}\n`,
-            );
-          }
-        }
-        if (outcome === "failed" && readTransientRecoveryContractFromRun(livenessRun)) {
-          await scheduleBoundedRetryForRun(livenessRun, agent);
-        }
-        await finalizeIssueCommentPolicy(livenessRun, agent);
-        await releaseIssueExecutionAndPromote(livenessRun);
-        await handleRunLivenessContinuation(livenessRun);
+        await setWakeupStatus(run.wakeupRequestId, "failed", {
+          finishedAt: new Date(),
+          error: "Machine offline",
+        });
+        await finalizeAgentStatus(agent.id, "failed");
+        activeRunExecutions.delete(run.id);
+        return;
       }
 
-      if (finalizedRun) {
-        await updateRuntimeState(agent, finalizedRun, adapterResult, {
-          legacySessionId: nextSessionState.legacySessionId,
-        }, normalizedUsage);
-        if (taskKey) {
-          if (adapterResult.clearSession || (!nextSessionState.params && !nextSessionState.displayId)) {
-            await clearTaskSessions(agent.companyId, agent.id, {
-              taskKey,
-              adapterType: agent.adapterType,
-            });
-          } else {
-            await upsertTaskSession({
-              companyId: agent.companyId,
-              agentId: agent.id,
-              adapterType: agent.adapterType,
-              taskKey,
-              sessionParamsJson: nextSessionState.params,
-              sessionDisplayId: nextSessionState.displayId,
-              lastRunId: finalizedRun.id,
-              lastError: outcome === "succeeded" ? null : (adapterResult.errorMessage ?? "run_failed"),
-            });
+      // Mark run as running (dispatched to machine)
+      await setRunStatus(run.id, "running", {
+        error: null,
+        resultJson: { machineId: targetMachineId, dispatchedAt: new Date().toISOString() },
+      });
+
+      // Set up async WS event listeners for task lifecycle
+      const cleanupListeners = () => {
+        machineTaskEmitter.removeListener("task_result", onTaskResult);
+        machineTaskEmitter.removeListener("task_progress", onTaskProgress);
+        machineTaskEmitter.removeListener("task_busy", onTaskBusy);
+        machineTaskEmitter.removeListener("machine_lost", onMachineLost);
+      };
+
+      const onTaskResult = async (event: { machineId: string; runId: string; exitCode: number | null; stdout: string; stderr: string }) => {
+        if (event.runId !== run.id) return;
+        cleanupListeners();
+        try {
+          const exitCode = event.exitCode ?? 1;
+          const status = exitCode === 0 ? "succeeded" : "failed";
+          const errorMessage = exitCode !== 0
+            ? (event.stderr || "Adapter failed").trim().split("\n")[0]?.slice(0, 500) ?? "Adapter failed"
+            : null;
+
+          await setRunStatus(run.id, status as any, {
+            finishedAt: new Date(),
+            error: errorMessage,
+            errorCode: exitCode !== 0 ? "adapter_failed" : null,
+            exitCode,
+          });
+          await setWakeupStatus(run.wakeupRequestId, status === "succeeded" ? "completed" : "failed", {
+            finishedAt: new Date(),
+            error: errorMessage,
+          });
+
+          if (event.stdout) {
+            await appendRunEvent(run, 1, {
+              eventType: "adapter.output",
+              stream: "stdout",
+              level: "info",
+              message: event.stdout.slice(0, 50_000),
+            }).catch(() => undefined);
           }
+
+          logger.info({ runId: run.id, machineId: event.machineId, exitCode, status }, "machine task completed");
+          await finalizeAgentStatus(agent.id, status === "succeeded" ? "succeeded" : "failed");
+          void startNextQueuedRunForAgent(agent.id);
+        } catch (resultErr) {
+          logger.error({ err: resultErr, runId: run.id }, "failed to process machine task result");
+        } finally {
+          activeRunExecutions.delete(run.id);
         }
-      }
-      await finalizeAgentStatus(agent.id, outcome);
+      };
+
+      const onTaskProgress = async (event: { runId: string; log: string }) => {
+        if (event.runId !== run.id) return;
+        try {
+          await onLog("stdout", event.log);
+        } catch { /* ignore log errors */ }
+      };
+
+      const onTaskBusy = async (event: { runId: string }) => {
+        if (event.runId !== run.id) return;
+        cleanupListeners();
+        try {
+          await setRunStatus(run.id, "queued", { error: "Machine busy — re-queued" });
+          logger.info({ runId: run.id, machineId: targetMachineId }, "machine busy — run re-queued");
+          void startNextQueuedRunForAgent(agent.id);
+        } catch (busyErr) {
+          logger.error({ err: busyErr, runId: run.id }, "failed to re-queue busy run");
+        } finally {
+          activeRunExecutions.delete(run.id);
+        }
+      };
+
+      const onMachineLost = async (event: { machineId: string }) => {
+        if (event.machineId !== targetMachineId) return;
+        cleanupListeners();
+        try {
+          const currentRun = await getRun(run.id);
+          if (currentRun && !isHeartbeatRunTerminalStatus(currentRun.status)) {
+            await setRunStatus(run.id, "queued", { error: "Machine disconnected — re-queued" });
+            logger.warn({ runId: run.id, machineId: targetMachineId }, "machine lost — run re-queued");
+            void startNextQueuedRunForAgent(agent.id);
+          }
+        } catch (lostErr) {
+          logger.error({ err: lostErr, runId: run.id }, "failed to re-queue after machine lost");
+        } finally {
+          activeRunExecutions.delete(run.id);
+        }
+      };
+
+      machineTaskEmitter.on("task_result", onTaskResult);
+      machineTaskEmitter.on("task_progress", onTaskProgress);
+      machineTaskEmitter.on("task_busy", onTaskBusy);
+      machineTaskEmitter.on("machine_lost", onMachineLost);
+
+      // Execution is now async — result comes via WebSocket events
+      // Return immediately; the event listeners above handle completion
+      activeRunExecutions.delete(run.id);
     } catch (err) {
       const message = redactCurrentUserText(
         err instanceof Error ? err.message : "Unknown adapter failure",

@@ -5,6 +5,9 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import WebSocket from "ws";
 
+/** Track active task processes */
+const activeTasks = new Map<string, { process: ReturnType<typeof execFile>; adapterType: string }>();
+
 // ---------------------------------------------------------------------------
 // CLI argument parsing (no deps)
 // ---------------------------------------------------------------------------
@@ -313,12 +316,20 @@ async function main() {
           cpu: 0,
           memory: 0,
           adapters: [],
+          activeTasks: activeTasks.size,
+          activeTaskIds: Array.from(activeTasks.keys()),
         }));
       }
     }, 30_000);
 
     ws.on("close", () => {
       clearInterval(heartbeatInterval);
+      // Kill all active tasks
+      for (const [runId, task] of activeTasks) {
+        console.log(`  Killing task ${runId} on disconnect`);
+        task.process.kill("SIGTERM");
+      }
+      activeTasks.clear();
       console.log("  Disconnected from server.");
       process.exit(0);
     });
@@ -332,7 +343,85 @@ async function main() {
       } else if (msg.type === "heartbeat_ack") {
         // Heartbeat acknowledged
       } else if (msg.type === "task_dispatch") {
-        console.log("  Received task dispatch:", JSON.stringify(msg));
+        const runId = typeof msg.runId === "string" ? msg.runId : null;
+        const adapterType = typeof msg.adapterType === "string" ? msg.adapterType : null;
+        const adapterConfig = (typeof msg.adapterConfig === "object" && msg.adapterConfig !== null
+          ? msg.adapterConfig : {}) as Record<string, unknown>;
+        const prompt = typeof msg.prompt === "string" ? msg.prompt : "";
+        const timeoutSec = typeof msg.timeoutSec === "number" ? msg.timeoutSec : 300;
+
+        if (!runId || !adapterType) {
+          console.error("  Invalid task_dispatch: missing runId or adapterType");
+          return;
+        }
+
+        // ACK immediately
+        ws.send(JSON.stringify({ type: "task_ack", runId }));
+        console.log(`  Task ${runId}: dispatched (${adapterType})`);
+
+        // Resolve command
+        const command = resolveCommand(adapterType, adapterConfig);
+
+        // Build args
+        const args: string[] = ["--print", "-", "--output-format", "stream-json", "--verbose"];
+        const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
+        if (model) args.push("--model", model);
+        if (adapterConfig.dangerouslySkipPermissions !== false) args.push("--dangerously-skip-permissions");
+        const maxTurns = typeof adapterConfig.maxTurnsPerRun === "number" ? adapterConfig.maxTurnsPerRun : 0;
+        if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
+
+        console.log(`  Task ${runId}: spawning ${command} ${args.join(" ").substring(0, 80)}...`);
+
+        // Spawn process
+        const child = execFile(command, args, {
+          cwd: process.cwd(),
+          env: process.env,
+          timeout: timeoutSec * 1000,
+          maxBuffer: 10 * 1024 * 1024, // 10MB
+        }, (err, stdout, stderr) => {
+          activeTasks.delete(runId);
+
+          let exitCode = 0;
+          if (err) {
+            exitCode = (err as any).killed ? -1 : ((err as any).code ?? 1);
+            if (typeof exitCode === "string") exitCode = 1; // code can be string like 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+          }
+
+          console.log(`  Task ${runId}: finished (exit ${exitCode})`);
+
+          try {
+            ws.send(JSON.stringify({
+              type: "task_result",
+              runId,
+              exitCode,
+              stdout: stdout?.substring(0, 5 * 1024 * 1024) ?? "", // Cap at 5MB
+              stderr: stderr?.substring(0, 1 * 1024 * 1024) ?? "", // Cap at 1MB
+            }));
+          } catch {
+            console.error(`  Task ${runId}: failed to send result (WS disconnected)`);
+          }
+        });
+
+        // Write prompt as stdin
+        if (child.stdin) {
+          child.stdin.write(prompt);
+          child.stdin.end();
+        }
+
+        // Track active process
+        activeTasks.set(runId, { process: child, adapterType });
+
+      } else if (msg.type === "task_cancel") {
+        const runId = typeof msg.runId === "string" ? msg.runId : null;
+        if (!runId) return;
+
+        const active = activeTasks.get(runId);
+        if (active) {
+          console.log(`  Task ${runId}: cancelling`);
+          active.process.kill("SIGTERM");
+          activeTasks.delete(runId);
+        }
+
       } else if (msg.type === "adapter_test") {
         const adapterType = typeof msg.adapterType === "string" ? msg.adapterType : "unknown";
         const adapterConfig = (typeof msg.adapterConfig === "object" && msg.adapterConfig !== null
@@ -367,11 +456,23 @@ async function main() {
   // Handle graceful shutdown
   process.on("SIGINT", () => {
     console.log("\n  Disconnecting...");
+    // Kill all active tasks
+    for (const [runId, task] of activeTasks) {
+      console.log(`  Killing task ${runId} on disconnect`);
+      task.process.kill("SIGTERM");
+    }
+    activeTasks.clear();
     ws.close();
     process.exit(0);
   });
 
   process.on("SIGTERM", () => {
+    // Kill all active tasks
+    for (const [runId, task] of activeTasks) {
+      console.log(`  Killing task ${runId} on disconnect`);
+      task.process.kill("SIGTERM");
+    }
+    activeTasks.clear();
     ws.close();
     process.exit(0);
   });
