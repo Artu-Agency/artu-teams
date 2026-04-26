@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { LiveEvent } from "@paperclipai/shared";
 import { ApiError } from "../../api/client";
+import { getWsBaseUrl } from "../../lib/ws-url";
 import { instanceSettingsApi } from "../../api/instanceSettings";
 import { heartbeatsApi } from "../../api/heartbeats";
 import { buildTranscript, getUIAdapter, onAdapterChange, type RunLogChunk, type TranscriptEntry } from "../../adapters";
@@ -279,8 +280,7 @@ export function useLiveRunTranscripts({
 
     const connect = () => {
       if (closed) return;
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/api/companies/${encodeURIComponent(companyId)}/events/ws`;
+      const url = `${getWsBaseUrl()}/companies/${encodeURIComponent(companyId)}/events/ws`;
       socket = new WebSocket(url);
 
       socket.onmessage = (message) => {

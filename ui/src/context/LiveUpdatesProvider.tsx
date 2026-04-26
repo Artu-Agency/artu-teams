@@ -6,6 +6,7 @@ import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import type { CompanyUserDirectoryResponse } from "../api/access";
 import { issuesApi } from "../api/issues";
 import { authApi } from "../api/auth";
+import { getWsBaseUrl } from "../lib/ws-url";
 import { useCompany } from "./CompanyContext";
 import type { ToastInput } from "./ToastContext";
 import { useToastActions } from "./ToastContext";
@@ -958,8 +959,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
 
     const connect = () => {
       if (closed) return;
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/api/companies/${encodeURIComponent(liveCompanyId)}/events/ws`;
+      const url = `${getWsBaseUrl()}/companies/${encodeURIComponent(liveCompanyId)}/events/ws`;
       const nextSocket = new WebSocket(url);
       socket = nextSocket;
 
