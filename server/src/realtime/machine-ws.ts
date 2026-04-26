@@ -330,6 +330,8 @@ export function setupMachineWebSocket(server: HttpServer, _db: Db) {
 
   // ------- Upgrade handler -------
   server.on("upgrade", (req, socket, head) => {
+    logger.info({ url: req.url?.substring(0, 80), headers: { upgrade: req.headers.upgrade, connection: req.headers.connection } }, "upgrade request received");
+
     if (!req.url) return; // let other upgrade handlers deal with it
 
     const url = new URL(req.url, "http://localhost");
@@ -338,17 +340,23 @@ export function setupMachineWebSocket(server: HttpServer, _db: Db) {
       return;
     }
 
+    logger.info("machine WS upgrade — path matched");
+
     const token = parseTokenFromQuery(url);
     if (!token) {
+      logger.warn("machine WS upgrade rejected — missing token");
       rejectUpgrade(socket, "401 Unauthorized", "missing token");
       return;
     }
 
     const claims = verifyMachineJwt(token);
     if (!claims) {
+      logger.warn("machine WS upgrade rejected — invalid/expired JWT");
       rejectUpgrade(socket, "403 Forbidden", "invalid or expired token");
       return;
     }
+
+    logger.info({ machineId: claims.machineId }, "machine WS upgrade — JWT valid, upgrading");
 
     // TODO: load machine from DB and resolve authorized companyIds
     // For MVP, attach claims directly and let the connection handler proceed
