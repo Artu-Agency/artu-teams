@@ -184,6 +184,13 @@ export function OnboardingWizard() {
     setCreatedProjectId(null);
     setCreatedAgentId(null);
     setCreatedIssueRef(null);
+    // Reset machine invite state so a new invite is generated
+    machineInviteRequestedRef.current = false;
+    setMachineInviteToken(null);
+    setMachineInviteLoading(false);
+    setMachineInviteError(null);
+    setConnectedMachine(null);
+    setMachineInitialCount(null);
   }, [
     effectiveOnboardingOpen,
     effectiveOnboardingOptions.companyId,
@@ -307,6 +314,7 @@ export function OnboardingWizard() {
     setConnectedMachine(null);
     setMachineInitialCount(null);
     setMachineCopied(false);
+    machineInviteRequestedRef.current = false;
     setAgentName("CEO");
     setAdapterType("claude_local");
     setModel("");
