@@ -41,7 +41,7 @@ export function machineService(db: Db) {
       ? await db
           .select()
           .from(machineAdapters)
-          .where(sql`${machineAdapters.machineId} = ANY(${machineIds})`)
+          .where(sql`${machineAdapters.machineId} IN ${machineIds}`)
       : [];
 
     const adaptersByMachine = new Map<string, typeof allAdapters>();
