@@ -415,6 +415,19 @@ function connectWebSocket(
     }
   });
 
+  ws.on("unexpected-response", (_req, res) => {
+    if (res.statusCode === 410) {
+      console.error("\n  ✗ Server rejected connection: credentials are stale (machine or company no longer exists).");
+      console.error("  Clearing saved config and restarting authentication...\n");
+      clearConfig();
+      // Restart the connect flow
+      void main();
+      return;
+    }
+    console.error(`  WebSocket rejected: ${res.statusCode} ${res.statusMessage ?? ""}`);
+    process.exit(1);
+  });
+
   ws.on("error", (err) => {
     console.error("  WebSocket error:", err.message);
     process.exit(1);

@@ -486,15 +486,34 @@ export function setupMachineWebSocket(server: HttpServer, db: Db) {
 
     logger.info({ machineId: claims.machineId }, "machine WS upgrade — JWT valid, upgrading");
 
-    // Load companyIds from DB before upgrading (async in sync handler)
+    // Verify machine still exists in DB and load companyIds before upgrading
     void (async () => {
       try {
+        // Check machine exists (may have been deleted if DB was wiped)
+        const machineRow = await db
+          .select({ id: machines.id })
+          .from(machines)
+          .where(eq(machines.id, claims.machineId))
+          .then((rows) => rows[0] ?? null);
+
+        if (!machineRow) {
+          logger.warn({ machineId: claims.machineId }, "machine WS upgrade rejected — machine not found in DB (stale credentials)");
+          rejectUpgrade(socket, "410 Gone", "machine_not_found");
+          return;
+        }
+
         const rows = await db
           .select({ companyId: machineCompanies.companyId })
           .from(machineCompanies)
           .where(eq(machineCompanies.machineId, claims.machineId));
 
         const companyIds = rows.map((r) => r.companyId);
+
+        if (companyIds.length === 0) {
+          logger.warn({ machineId: claims.machineId }, "machine WS upgrade rejected — no company associations (stale credentials)");
+          rejectUpgrade(socket, "410 Gone", "no_company");
+          return;
+        }
 
         (req as any).__machineClaims = claims;
         (req as any).__machineCompanyIds = companyIds;
