@@ -342,6 +342,161 @@ export function machineService(db: Db) {
     return { machineId: best.machineId, adapterId: best.adapterId };
   }
 
+  /**
+   * Connect a machine (create or reuse) — authenticated via board API key.
+   * No invite token needed.
+   */
+  async function connectMachine(input: {
+    machineId: string | null;
+    hostname: string;
+    os: string;
+    arch: string;
+    ownerUserId: string;
+    companyId: string;
+    adapters: { type: string; model: string; version: string }[];
+  }) {
+    const now = new Date();
+    let machine: typeof machines.$inferSelect;
+
+    if (input.machineId) {
+      // Try to find existing machine
+      const [existing] = await db
+        .select()
+        .from(machines)
+        .where(eq(machines.id, input.machineId))
+        .limit(1);
+
+      if (existing) {
+        // Reuse — update info + set online
+        const [updated] = await db
+          .update(machines)
+          .set({
+            hostname: input.hostname,
+            name: input.hostname,
+            os: input.os,
+            arch: input.arch,
+            status: "online",
+            lastSeenAt: now,
+            updatedAt: now,
+          })
+          .where(eq(machines.id, input.machineId))
+          .returning();
+        machine = updated;
+      } else {
+        // Create with specified ID
+        const [created] = await db
+          .insert(machines)
+          .values({
+            id: input.machineId,
+            name: input.hostname,
+            hostname: input.hostname,
+            os: input.os,
+            arch: input.arch,
+            ownerUserId: input.ownerUserId,
+            status: "online",
+            lastSeenAt: now,
+          })
+          .returning();
+        machine = created;
+      }
+    } else {
+      // No machineId — create new
+      const [created] = await db
+        .insert(machines)
+        .values({
+          name: input.hostname,
+          hostname: input.hostname,
+          os: input.os,
+          arch: input.arch,
+          ownerUserId: input.ownerUserId,
+          status: "online",
+          lastSeenAt: now,
+        })
+        .returning();
+      machine = created;
+    }
+
+    // Ensure machine-company bridge exists
+    const [existingBridge] = await db
+      .select()
+      .from(machineCompanies)
+      .where(
+        and(
+          eq(machineCompanies.machineId, machine.id),
+          eq(machineCompanies.companyId, input.companyId),
+        ),
+      )
+      .limit(1);
+
+    if (!existingBridge) {
+      await db.insert(machineCompanies).values({
+        machineId: machine.id,
+        companyId: input.companyId,
+        role: "worker",
+      });
+    }
+
+    // Upsert adapters
+    if (input.adapters.length > 0) {
+      await db
+        .delete(machineAdapters)
+        .where(eq(machineAdapters.machineId, machine.id));
+      await db.insert(machineAdapters).values(
+        input.adapters.map((a) => ({
+          machineId: machine.id,
+          adapterType: a.type,
+          model: a.model,
+          version: a.version,
+          status: "available",
+        })),
+      );
+    }
+
+    // Merge stale duplicates
+    const mergedCount = await mergeStaleDuplicates(
+      machine.id,
+      input.hostname,
+      input.os,
+      input.arch,
+      input.ownerUserId,
+    );
+
+    return { machine: await getMachine(machine.id), mergedCount };
+  }
+
+  /**
+   * Delete offline machines with same fingerprint (hostname+os+arch+owner) but different ID.
+   */
+  async function mergeStaleDuplicates(
+    keepId: string,
+    hostname: string,
+    os: string,
+    arch: string,
+    ownerUserId: string,
+  ): Promise<number> {
+    const duplicates = await db
+      .select({ id: machines.id })
+      .from(machines)
+      .where(
+        and(
+          eq(machines.hostname, hostname),
+          eq(machines.os, os),
+          eq(machines.arch, arch),
+          eq(machines.ownerUserId, ownerUserId),
+          eq(machines.status, "offline"),
+          sql`${machines.id} != ${keepId}`,
+        ),
+      );
+
+    for (const dup of duplicates) {
+      await db.delete(machineAdapters).where(eq(machineAdapters.machineId, dup.id));
+      await db.delete(machineCompanies).where(eq(machineCompanies.machineId, dup.id));
+      await db.delete(machines).where(eq(machines.id, dup.id));
+    }
+
+    return duplicates.length;
+  }
+
   return {
     listMachinesForCompany,
     getMachine,
@@ -351,5 +506,7 @@ export function machineService(db: Db) {
     updateMachineStatus,
     updateMachineAdapters,
     getAvailableMachineForTask,
+    connectMachine,
+    mergeStaleDuplicates,
   };
 }

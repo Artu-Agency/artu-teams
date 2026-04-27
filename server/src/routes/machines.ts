@@ -77,6 +77,55 @@ export function machineRoutes(db: Db) {
     res.status(201).json({ ...machine, jwt, wsUrl });
   });
 
+  // POST /machines/connect — authenticated machine connect (no invite needed)
+  router.post("/machines/connect", async (req, res) => {
+    assertBoard(req);
+    const userId = req.actor.userId;
+    if (!userId) {
+      throw badRequest("User authentication required");
+    }
+
+    const { machineId, hostname, os, arch, companyId, adapters } = req.body ?? {};
+
+    if (!hostname || typeof hostname !== "string") {
+      throw badRequest("Missing or invalid hostname");
+    }
+    if (!companyId || typeof companyId !== "string") {
+      throw badRequest("Missing or invalid companyId");
+    }
+
+    assertCompanyAccess(req, companyId);
+
+    const result = await svc.connectMachine({
+      machineId: typeof machineId === "string" ? machineId : null,
+      hostname,
+      os: os ?? "unknown",
+      arch: arch ?? "unknown",
+      ownerUserId: userId,
+      companyId,
+      adapters: Array.isArray(adapters) ? adapters : [],
+    });
+
+    // Generate JWT for WS auth
+    const jwt = result.machine?.id
+      ? generateMachineJwt(result.machine.id, userId)
+      : null;
+
+    const publicUrl = process.env.PAPERCLIP_PUBLIC_URL?.trim();
+    let wsUrl: string | null = null;
+    if (jwt && publicUrl) {
+      const wsBase = publicUrl.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
+      wsUrl = `${wsBase}/ws/machines?token=${jwt}`;
+    }
+
+    res.status(200).json({
+      ...result.machine,
+      jwt,
+      wsUrl,
+      mergedDuplicates: result.mergedCount,
+    });
+  });
+
   // DELETE /companies/:companyId/machines/:machineId — remove machine from company
   router.delete("/companies/:companyId/machines/:machineId", async (req, res) => {
     const { companyId, machineId } = req.params;
