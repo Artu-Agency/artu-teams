@@ -115,7 +115,8 @@ function runAdapterTestLocally(adapterType: string, config: Record<string, unkno
       checks.push({ code: "command_found", level: "info", message: `Command is executable: ${command}` });
 
       // Run the actual probe: command --print - --output-format stream-json --verbose
-      const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
+      const args = ["--print", "-", "--output-format", "stream-json", "--verbose", "--no-session-persistence"];
+      if (config.inheritUserSettings !== true) args.push("--setting-sources", "");
       if (config.dangerouslySkipPermissions !== false) args.push("--dangerously-skip-permissions");
       if (typeof config.model === "string" && config.model.trim()) {
         args.push("--model", config.model.trim());
@@ -317,13 +318,22 @@ function connectWebSocket(
         // Resolve command
         const command = resolveCommand(adapterType, adapterConfig);
 
-        // Build args — isolated from user's personal hooks/plugins/MCP servers
+        // Build args — isolated from user's personal hooks/plugins/MCP servers by default
+        const inheritUserSettings = adapterConfig.inheritUserSettings === true;
         const args: string[] = [
           "--print", "-",
           "--output-format", "stream-json",
           "--verbose",
           "--no-session-persistence",
         ];
+
+        // By default, don't load user settings (hooks, MCP servers, skills, CLAUDE.md, memory)
+        // This prevents agents from inheriting the machine owner's personal config.
+        // Set inheritUserSettings: true in agent adapter config to allow it.
+        if (!inheritUserSettings) {
+          args.push("--setting-sources", "");
+        }
+
         const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
         if (model) args.push("--model", model);
         if (adapterConfig.dangerouslySkipPermissions !== false) args.push("--dangerously-skip-permissions");
