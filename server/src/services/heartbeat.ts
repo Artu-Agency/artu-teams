@@ -5383,6 +5383,14 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           }
 
           logger.info({ runId: run.id, machineId: event.machineId, exitCode, status }, "machine task completed");
+
+          // Post-completion hooks (same as local adapter path)
+          const finishedRun = await getRun(run.id) ?? run;
+          const livenessRun = await classifyAndPersistRunLiveness(finishedRun).catch(() => finishedRun) ?? finishedRun;
+          await refreshContinuationSummaryForRun(livenessRun, agent).catch(() => undefined);
+          await finalizeIssueCommentPolicy(livenessRun, agent).catch(() => undefined);
+          await releaseIssueExecutionAndPromote(livenessRun);
+
           await finalizeAgentStatus(agent.id, status === "succeeded" ? "succeeded" : "failed");
           void startNextQueuedRunForAgent(agent.id);
         } catch (resultErr) {
