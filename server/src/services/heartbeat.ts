@@ -5194,21 +5194,30 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           (entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string",
         ),
       );
-      const runtimeServices = await ensureRuntimeServicesForRun({
-        db,
-        runId: run.id,
-        agent: {
-          id: agent.id,
-          name: agent.name,
-          companyId: agent.companyId,
-        },
-        issue: issueRef,
-        workspace: executionWorkspace,
-        executionWorkspaceId: persistedExecutionWorkspace?.id ?? issueRef?.executionWorkspaceId ?? null,
-        config: effectiveResolvedConfig,
-        adapterEnv,
-        onLog,
-      });
+      // Skip runtime services for machine-dispatched runs — the machine manages its own environment.
+      // Runtime services (dev servers, databases) would spawn processes locally on the EC2 server,
+      // which violates the "server only orchestrates" principle.
+      const { findConnectedMachineForCompany: hasMachineForServices } =
+        await import("../realtime/machine-ws.js");
+      const skipRuntimeServices = !!hasMachineForServices(agent.companyId);
+
+      const runtimeServices = skipRuntimeServices
+        ? []
+        : await ensureRuntimeServicesForRun({
+            db,
+            runId: run.id,
+            agent: {
+              id: agent.id,
+              name: agent.name,
+              companyId: agent.companyId,
+            },
+            issue: issueRef,
+            workspace: executionWorkspace,
+            executionWorkspaceId: persistedExecutionWorkspace?.id ?? issueRef?.executionWorkspaceId ?? null,
+            config: effectiveResolvedConfig,
+            adapterEnv,
+            onLog,
+          });
       if (runtimeServices.length > 0) {
         context.paperclipRuntimeServices = runtimeServices;
         context.paperclipRuntimePrimaryUrl =

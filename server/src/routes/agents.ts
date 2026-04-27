@@ -991,26 +991,9 @@ export function agentRoutes(
         return;
       }
 
-      // Server-side adapter test — should never be reached for machine-dispatched adapters
-      const adapter = requireServerAdapter(type);
-
-      const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
-        companyId,
-        inputAdapterConfig,
-        { strictMode: strictSecretsMode },
-      );
-      const { config: runtimeAdapterConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-        companyId,
-        normalizedAdapterConfig,
-      );
-
-      const result = await adapter.testEnvironment({
-        companyId,
-        adapterType: type,
-        config: runtimeAdapterConfig,
-      });
-
-      res.json(result);
+      // Dead code guard: server must never execute adapters locally.
+      // All adapter tests must go through machine dispatch above.
+      res.status(501).json({ error: "Server-side adapter execution is disabled. Connect a machine." });
     },
   );
 
@@ -1023,35 +1006,16 @@ export function agentRoutes(
     }
     await assertCanReadConfigurations(req, agent.companyId);
 
-    const adapter = findActiveServerAdapter(agent.adapterType);
-    if (!adapter?.listSkills) {
-      const preference = readPaperclipSkillSyncPreference(
-        agent.adapterConfig as Record<string, unknown>,
-      );
-      const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId, {
-        materializeMissing: false,
-      });
-      const requiredSkills = runtimeSkillEntries.filter((entry) => entry.required).map((entry) => entry.key);
-      res.json(buildUnsupportedSkillSnapshot(agent.adapterType, Array.from(new Set([...requiredSkills, ...preference.desiredSkills]))));
-      return;
-    }
-
-    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-      agent.companyId,
-      agent.adapterConfig,
+    // Never run adapter CLIs on the server — skills are managed on the machine.
+    // Return unsupported snapshot for all adapter types.
+    const preference = readPaperclipSkillSyncPreference(
+      agent.adapterConfig as Record<string, unknown>,
     );
-    const runtimeSkillConfig = await buildRuntimeSkillConfig(
-      agent.companyId,
-      agent.adapterType,
-      runtimeConfig,
-    );
-    const snapshot = await adapter.listSkills({
-      agentId: agent.id,
-      companyId: agent.companyId,
-      adapterType: agent.adapterType,
-      config: runtimeSkillConfig,
+    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId, {
+      materializeMissing: false,
     });
-    res.json(snapshot);
+    const requiredSkills = runtimeSkillEntries.filter((entry) => entry.required).map((entry) => entry.key);
+    res.json(buildUnsupportedSkillSnapshot(agent.adapterType, Array.from(new Set([...requiredSkills, ...preference.desiredSkills]))));
   });
 
   router.post(
@@ -1101,30 +1065,8 @@ export function agentRoutes(
         return;
       }
 
-      const adapter = findActiveServerAdapter(updated.adapterType);
-      const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-        updated.companyId,
-        updated.adapterConfig,
-      );
-      const runtimeSkillConfig = {
-        ...runtimeConfig,
-        paperclipRuntimeSkills: runtimeSkillEntries,
-      };
-      const snapshot = adapter?.syncSkills
-        ? await adapter.syncSkills({
-            agentId: updated.id,
-            companyId: updated.companyId,
-            adapterType: updated.adapterType,
-            config: runtimeSkillConfig,
-          }, desiredSkills)
-        : adapter?.listSkills
-          ? await adapter.listSkills({
-              agentId: updated.id,
-              companyId: updated.companyId,
-              adapterType: updated.adapterType,
-              config: runtimeSkillConfig,
-            })
-          : buildUnsupportedSkillSnapshot(updated.adapterType, desiredSkills);
+      // Never run adapter CLIs on the server — return unsupported snapshot.
+      const snapshot = buildUnsupportedSkillSnapshot(updated.adapterType, desiredSkills);
 
       await logActivity(db, {
         companyId: updated.companyId,
