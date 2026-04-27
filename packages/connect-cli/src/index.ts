@@ -1,9 +1,9 @@
 import { hostname as osHostname, platform, arch as osArch } from "node:os";
-import { request as httpsRequest } from "node:https";
-import { request as httpRequest } from "node:http";
 import { execFile } from "node:child_process";
-import path from "node:path";
 import WebSocket from "ws";
+import { post, get, authHeaders } from "./http.js";
+import { loadConfig, saveConfig, clearConfig, getOrCreateMachineId, CONFIG_FILE } from "./config.js";
+import { browserLogin, selectCompany } from "./login.js";
 
 /** Track active task processes */
 const activeTasks = new Map<string, { process: ReturnType<typeof execFile>; adapterType: string }>();
@@ -12,84 +12,52 @@ const activeTasks = new Map<string, { process: ReturnType<typeof execFile>; adap
 // CLI argument parsing (no deps)
 // ---------------------------------------------------------------------------
 
-function parseArgs(argv: string[]): { server: string; token: string; name?: string } {
-  let server = "";
-  let token = "";
+interface ConnectArgs {
+  command: "connect" | "status" | "logout";
+  server?: string;
+  token?: string;
+  name?: string;
+  reset?: boolean;
+}
+
+function parseArgs(argv: string[]): ConnectArgs {
+  let command: ConnectArgs["command"] = "connect";
+  let server: string | undefined;
+  let token: string | undefined;
   let name: string | undefined;
+  let reset = false;
 
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "connect") continue;
-    if ((arg === "--server" || arg === "-s") && argv[i + 1]) {
-      server = argv[++i]!;
-    } else if ((arg === "--token" || arg === "-t") && argv[i + 1]) {
-      token = argv[++i]!;
-    } else if ((arg === "--name" || arg === "-n") && argv[i + 1]) {
-      name = argv[++i]!;
-    } else if (arg === "--help" || arg === "-h") {
+    if (arg === "connect" || arg === "status" || arg === "logout") {
+      command = arg;
+      continue;
+    }
+    if (arg === "--reset") { reset = true; continue; }
+    if ((arg === "--server" || arg === "-s") && argv[i + 1]) { server = argv[++i]!; continue; }
+    if ((arg === "--token" || arg === "-t") && argv[i + 1]) { token = argv[++i]!; continue; }
+    if ((arg === "--name" || arg === "-n") && argv[i + 1]) { name = argv[++i]!; continue; }
+    if (arg === "--help" || arg === "-h") {
       console.log(`
-artu-teams connect — Connect this machine to an Artu Teams server
+artu-teams — Connect your machine to an Artu Teams server
 
-Usage:
-  npx artu-teams connect --server <url> --token <invite-token>
+Commands:
+  connect         Connect machine (login via browser on first use)
+  status          Show current config and connection status
+  logout          Revoke credentials and clear local config
 
 Options:
-  --server, -s <url>     Server API base URL (e.g. https://teams.artu.ar/api)
-  --token, -t <token>    Invite token from the onboarding wizard
-  --name, -n <name>      Machine name (default: hostname)
-  --help, -h             Show this help
+  --server, -s    Server URL (default: saved or https://teams.artu.ar/api)
+  --token, -t     Invite token (legacy, optional)
+  --name, -n      Machine name (default: hostname)
+  --reset         Force re-login (clear saved credentials)
+  --help, -h      Show this help
 `);
       process.exit(0);
     }
   }
 
-  if (!server || !token) {
-    console.error("Error: --server and --token are required");
-    console.error("Usage: npx artu-teams connect --server <url> --token <token>");
-    process.exit(1);
-  }
-
-  return { server, token, name };
-}
-
-// ---------------------------------------------------------------------------
-// HTTP helpers (no fetch dependency for broad Node compat)
-// ---------------------------------------------------------------------------
-
-function post(url: string, body: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const isHttps = parsed.protocol === "https:";
-    const doRequest = isHttps ? httpsRequest : httpRequest;
-
-    const payload = JSON.stringify(body);
-    const req = doRequest(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port || (isHttps ? 443 : 80),
-        path: parsed.pathname + parsed.search,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-        res.on("end", () => {
-          try {
-            resolve({ status: res.statusCode ?? 0, data: JSON.parse(data) });
-          } catch {
-            resolve({ status: res.statusCode ?? 0, data });
-          }
-        });
-      },
-    );
-    req.on("error", reject);
-    req.write(payload);
-    req.end();
-  });
+  return { command, server, token, name, reset };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,61 +195,46 @@ function runAdapterTestLocally(adapterType: string, config: Record<string, unkno
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Legacy token connect (backward compat)
 // ---------------------------------------------------------------------------
 
-async function main() {
-  const args = parseArgs(process.argv);
-  const serverBase = args.server.replace(/\/+$/, "");
-  const machineName = args.name ?? osHostname();
+async function legacyTokenConnect(server: string, token: string, name?: string) {
+  const serverBase = server.replace(/\/+$/, "");
+  const machineName = name ?? osHostname();
 
-  console.log(`\n  Artu Teams — Machine Connect`);
+  console.log(`\n  Artu Teams — Machine Connect (Legacy)`);
   console.log(`  Server: ${serverBase}`);
   console.log(`  Machine: ${machineName} (${platform()} ${osArch()})\n`);
 
-  // Step 1: Redeem invite token
-  console.log("  [1/3] Redeeming invite token...");
-  const redeemUrl = `${serverBase}/machines/redeem`;
-
-  let redeemResult: { status: number; data: unknown };
-  try {
-    redeemResult = await post(redeemUrl, {
-      token: args.token,
-      name: machineName,
-      hostname: osHostname(),
-      os: platform(),
-      arch: osArch(),
-      ownerUserId: "cli-connect",
-      adapters: [],
-    });
-  } catch (err) {
-    console.error(`  Error: Could not reach server at ${redeemUrl}`);
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  }
+  console.log("  [1/2] Redeeming invite token...");
+  const redeemResult = await post(`${serverBase}/machines/redeem`, {
+    token,
+    name: machineName,
+    hostname: osHostname(),
+    os: platform(),
+    arch: osArch(),
+    ownerUserId: "cli-connect",
+    adapters: [],
+  });
 
   if (redeemResult.status !== 201) {
-    const errorData = redeemResult.data as { error?: string } | null;
-    console.error(`  Error: Server returned ${redeemResult.status}`);
-    console.error(`  ${errorData?.error ?? JSON.stringify(redeemResult.data)}`);
-    process.exit(1);
+    const err = redeemResult.data as { error?: string } | null;
+    throw new Error(`Redeem failed: ${err?.error ?? redeemResult.status}`);
   }
 
-  const machine = redeemResult.data as {
-    id: string;
-    name: string;
-    hostname: string;
-    jwt?: string;
-    wsUrl?: string;
-  };
-
+  const machine = redeemResult.data as { id: string; name: string; jwt?: string; wsUrl?: string };
   console.log(`  Machine registered: ${machine.id}`);
+  connectWebSocket(machine, serverBase);
+}
 
-  // Step 2: Connect WebSocket
-  console.log("  [2/3] Connecting WebSocket...");
+// ---------------------------------------------------------------------------
+// WebSocket connection
+// ---------------------------------------------------------------------------
 
-  // Use server-provided wsUrl (direct to backend, bypasses Vercel proxy)
-  // Fallback: derive from server base if wsUrl not provided
+function connectWebSocket(
+  machine: { id: string; name: string; jwt?: string; wsUrl?: string },
+  serverBase: string,
+) {
   let wsUrl: string;
   if (machine.wsUrl) {
     wsUrl = machine.wsUrl;
@@ -291,24 +244,20 @@ async function main() {
       .replace(/^http:/, "ws:")
       .replace(/\/api\/?$/, "") + `/ws/machines?token=${machine.jwt}`;
   } else {
-    console.log("  Machine registered successfully.");
-    console.log(`\n  Machine ID: ${machine.id}`);
-    console.log("  Status: Connected (HTTP only)\n");
+    console.log(`  ✓ Connected (HTTP only). Machine ID: ${machine.id}\n`);
     console.log("  Press Ctrl+C to disconnect.\n");
-    await new Promise(() => {});
     return;
   }
 
   const ws = new WebSocket(wsUrl);
 
   ws.on("open", () => {
-    console.log("  [3/3] Connected!\n");
+    console.log(`  [✓] Connected!\n`);
     console.log(`  Machine ID: ${machine.id}`);
-    console.log(`  Name: ${machine.name}`);
-    console.log(`  Status: Online\n`);
+    console.log(`  Name:       ${machine.name}`);
+    console.log(`  Status:     Online\n`);
     console.log("  Press Ctrl+C to disconnect.\n");
 
-    // Heartbeat every 30s
     const heartbeatInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -324,7 +273,6 @@ async function main() {
 
     ws.on("close", () => {
       clearInterval(heartbeatInterval);
-      // Kill all active tasks
       for (const [runId, task] of activeTasks) {
         console.log(`  Killing task ${runId} on disconnect`);
         task.process.kill("SIGTERM");
@@ -453,10 +401,8 @@ async function main() {
     process.exit(1);
   });
 
-  // Handle graceful shutdown
-  process.on("SIGINT", () => {
+  const shutdown = () => {
     console.log("\n  Disconnecting...");
-    // Kill all active tasks
     for (const [runId, task] of activeTasks) {
       console.log(`  Killing task ${runId} on disconnect`);
       task.process.kill("SIGTERM");
@@ -464,18 +410,151 @@ async function main() {
     activeTasks.clear();
     ws.close();
     process.exit(0);
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+async function main() {
+  const args = parseArgs(process.argv);
+
+  if (args.command === "status") {
+    const config = loadConfig();
+    if (!config) {
+      console.log("\n  No saved configuration. Run: artu-teams connect\n");
+      return;
+    }
+    console.log(`\n  Artu Teams — Status`);
+    console.log(`  Server:    ${config.server}`);
+    console.log(`  User:      ${config.userId}`);
+    console.log(`  Machine:   ${config.machineId}`);
+    console.log(`  Company:   ${config.companyId}`);
+    console.log(`  Config:    ${CONFIG_FILE}\n`);
+    return;
+  }
+
+  if (args.command === "logout") {
+    const config = loadConfig();
+    if (config) {
+      try {
+        await post(`${config.server}/cli-auth/revoke-current`, {}, authHeaders(config.apiKey));
+        console.log("  ✓ API key revoked");
+      } catch {
+        // Server unreachable — still clear local config
+      }
+    }
+    clearConfig();
+    console.log("  ✓ Local config cleared\n");
+    return;
+  }
+
+  // --- connect command ---
+
+  if (args.reset) clearConfig();
+
+  // Legacy mode: --server + --token (backward compat)
+  if (args.token && args.server) {
+    await legacyTokenConnect(args.server, args.token, args.name);
+    return;
+  }
+
+  let config = loadConfig();
+  const serverBase = (args.server ?? config?.server ?? "https://teams.artu.ar/api").replace(/\/+$/, "");
+
+  console.log(`\n  Artu Teams — Machine Connect`);
+  console.log(`  Server: ${serverBase}\n`);
+
+  // Check if existing config is valid
+  if (config) {
+    try {
+      const meRes = await get(`${config.server}/cli-auth/me`, authHeaders(config.apiKey));
+      if (meRes.status === 200) {
+        const me = meRes.data as { user: { email: string } };
+        console.log(`  ✓ Authenticated as ${me.user.email}`);
+      } else {
+        console.log("  Saved credentials expired. Re-authenticating...");
+        config = null;
+      }
+    } catch {
+      console.log("  Saved credentials invalid. Re-authenticating...");
+      config = null;
+    }
+  }
+
+  // Login if needed
+  let apiKey: string;
+  let userId: string;
+  let companyId: string;
+  let machineId: string;
+
+  if (config) {
+    apiKey = config.apiKey;
+    userId = config.userId;
+    companyId = config.companyId;
+    machineId = config.machineId;
+  } else {
+    const login = await browserLogin(serverBase);
+    console.log(`  ✓ Authenticated as ${login.userEmail}`);
+
+    const company = await selectCompany(serverBase, login.apiKey, login.companyIds);
+    apiKey = login.apiKey;
+    userId = login.userId;
+    companyId = company.companyId;
+    machineId = getOrCreateMachineId();
+  }
+
+  // Connect machine via authenticated endpoint
+  const machineName = args.name ?? osHostname();
+  console.log(`  Connecting machine "${machineName}"...`);
+
+  const connectRes = await post(
+    `${serverBase}/machines/connect`,
+    {
+      machineId,
+      hostname: osHostname(),
+      os: platform(),
+      arch: osArch(),
+      companyId,
+      adapters: [],
+    },
+    authHeaders(apiKey),
+  );
+
+  if (connectRes.status !== 200) {
+    const err = connectRes.data as { error?: string } | null;
+    throw new Error(`Failed to connect machine: ${err?.error ?? connectRes.status}`);
+  }
+
+  const machine = connectRes.data as {
+    id: string;
+    name: string;
+    jwt?: string;
+    wsUrl?: string;
+    mergedDuplicates?: number;
+  };
+
+  // Save config
+  saveConfig({
+    machineId: machine.id,
+    server: serverBase,
+    apiKey,
+    userId,
+    companyId,
+    machineJwt: machine.jwt ?? "",
+    createdAt: new Date().toISOString(),
   });
 
-  process.on("SIGTERM", () => {
-    // Kill all active tasks
-    for (const [runId, task] of activeTasks) {
-      console.log(`  Killing task ${runId} on disconnect`);
-      task.process.kill("SIGTERM");
-    }
-    activeTasks.clear();
-    ws.close();
-    process.exit(0);
-  });
+  if (machine.mergedDuplicates && machine.mergedDuplicates > 0) {
+    console.log(`  ✓ Cleaned ${machine.mergedDuplicates} duplicate machine(s)`);
+  }
+
+  // Connect WebSocket
+  connectWebSocket(machine, serverBase);
 }
 
 main().catch((err) => {
