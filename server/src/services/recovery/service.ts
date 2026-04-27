@@ -1513,6 +1513,31 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         continue;
       }
 
+      // If the latest continuation run succeeded but the issue is still in_progress,
+      // the agent had its chance and didn't change the status — don't re-enqueue infinitely.
+      // Escalate to blocked instead.
+      if (latestRun && latestRun.status === "succeeded") {
+        const latestContext = parseObject(latestRun.contextSnapshot);
+        const latestRetryReason = readNonEmptyString(latestContext.retryReason);
+        if (latestRetryReason === "issue_continuation_needed") {
+          const updated = await escalateStrandedAssignedIssue({
+            issue,
+            previousStatus: "in_progress",
+            latestRun,
+            comment:
+              "A continuation run succeeded but the issue remains `in_progress` without an active execution path. " +
+              "Moving to `blocked` to prevent infinite re-enqueue.",
+          });
+          if (updated) {
+            result.escalated += 1;
+            result.issueIds.push(issue.id);
+          } else {
+            result.skipped += 1;
+          }
+          continue;
+        }
+      }
+
       const queued = await enqueueStrandedIssueRecovery({
         issueId: issue.id,
         agentId,
