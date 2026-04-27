@@ -58,3 +58,4 @@ tests/release-smoke/playwright-report/
 .superset/
 .claude/worktrees/
 docs/specs/
+ui/.env.vercel

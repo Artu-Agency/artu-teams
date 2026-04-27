@@ -26,22 +26,11 @@ function getSchemaFromUrl(url: string): string {
   }
 }
 
-function isTransactionPooler(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.port === '6543';
-  } catch {
-    return false;
-  }
-}
-
 function createUtilitySql(url: string) {
   const dbSchema = getSchemaFromUrl(url);
-  const txMode = isTransactionPooler(url);
   return postgres(url, {
     max: 1,
     onnotice: () => {},
-    ...(txMode ? { prepare: false } : {}),
     ...(dbSchema !== 'public' ? {
       connection: { search_path: dbSchema },
     } : {}),
@@ -81,12 +70,10 @@ export type MigrationState =
 
 export function createDb(url: string) {
   const dbSchema = getSchemaFromUrl(url);
-  const txMode = isTransactionPooler(url);
   const sql = postgres(url, {
     max: 10,
     idle_timeout: 20,
     connect_timeout: 10,
-    ...(txMode ? { prepare: false } : {}),
     ...(dbSchema !== 'public' ? {
       connection: { search_path: dbSchema },
     } : {}),

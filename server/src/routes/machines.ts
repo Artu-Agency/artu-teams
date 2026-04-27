@@ -64,7 +64,7 @@ export function machineRoutes(db: Db) {
     });
 
     // Generate a JWT so the CLI can open a WebSocket connection
-    const jwt = machine?.id ? generateMachineJwt(machine.id, ownerUserId ?? "unknown") : null;
+    const jwt = machine?.id ? generateMachineJwt(machine.id, machine.ownerUserId ?? "unknown") : null;
 
     // Build direct WebSocket URL (bypasses any reverse proxy that can't handle WS)
     const publicUrl = process.env.PAPERCLIP_PUBLIC_URL?.trim();

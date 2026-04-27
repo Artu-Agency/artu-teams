@@ -910,13 +910,16 @@ if (isMainModule(import.meta.url)) {
     logger.error({ err: reason }, "unhandled promise rejection — not crashing");
   });
 
-  // Prevent uncaught exceptions from crashing the server.  Log the error so it
-  // is debuggable, but keep the process alive.
+  // Only suppress known-benign uncaught exceptions (stream errors from
+  // disconnected clients). Everything else is a real bug — crash and restart.
   process.on("uncaughtException", (err) => {
-    // If the error originates from a closed/destroyed stream (e.g. client
-    // disconnecting mid-response), Node may surface ERR_STREAM_WRITE_AFTER_END
-    // or similar — these are harmless.
-    logger.error({ err }, "uncaught exception — not crashing");
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ERR_STREAM_WRITE_AFTER_END" || code === "ECONNRESET" || code === "EPIPE") {
+      logger.warn({ err }, "uncaught stream error — suppressed");
+      return;
+    }
+    logger.error({ err }, "uncaught exception — crashing");
+    process.exit(1);
   });
 
   void startServer().catch((err) => {
