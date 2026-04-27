@@ -464,7 +464,7 @@ export function OnboardingWizard() {
   const { data: onboardingMachines } = useQuery({
     queryKey: queryKeys.machines.list(createdCompanyId!),
     queryFn: () => machinesApi.list(createdCompanyId!),
-    enabled: !!createdCompanyId && step === 2 && !!machineInviteToken,
+    enabled: !!createdCompanyId && step === 2,
     refetchInterval: !connectedMachine ? 3000 : false,
   });
 
