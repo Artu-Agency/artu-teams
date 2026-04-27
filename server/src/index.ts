@@ -904,6 +904,21 @@ function isMainModule(metaUrl: string): boolean {
 }
 
 if (isMainModule(import.meta.url)) {
+  // Prevent unhandled promise rejections (e.g. DB statement_timeout errors in
+  // fire-and-forget flows) from crashing the Node process.
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ err: reason }, "unhandled promise rejection — not crashing");
+  });
+
+  // Prevent uncaught exceptions from crashing the server.  Log the error so it
+  // is debuggable, but keep the process alive.
+  process.on("uncaughtException", (err) => {
+    // If the error originates from a closed/destroyed stream (e.g. client
+    // disconnecting mid-response), Node may surface ERR_STREAM_WRITE_AFTER_END
+    // or similar — these are harmless.
+    logger.error({ err }, "uncaught exception — not crashing");
+  });
+
   void startServer().catch((err) => {
     logger.error({ err }, "Paperclip server failed to start");
     process.exit(1);
