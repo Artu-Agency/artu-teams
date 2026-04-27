@@ -6,14 +6,22 @@
   "bin": {
     "artu-teams": "./dist/index.js"
   },
-  "keywords": ["artu", "ai", "agents", "machines", "orchestration"],
+  "keywords": [
+    "artu",
+    "ai",
+    "agents",
+    "machines",
+    "orchestration"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Artu-Agency/artu-teams",
     "directory": "packages/connect-cli"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -22,6 +30,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "open": "^10.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
