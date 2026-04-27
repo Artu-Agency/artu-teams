@@ -5425,7 +5425,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                   model: parsedModel || agent.adapterType,
                   provider: "anthropic",
                   biller: "anthropic",
-                  billingType: "subscription",
+                  // If Claude reports a cost, it's metered (API key or overage); otherwise subscription_included
+                  billingType: parsedCostUsd && parsedCostUsd > 0 ? "metered_api" : "subscription_included",
                   sessionId: parsedSessionId,
                 }, {
                   legacySessionId: parsedSessionId,
