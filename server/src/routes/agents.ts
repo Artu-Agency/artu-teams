@@ -966,12 +966,32 @@ export function agentRoutes(
           res.json(result);
           return;
         } catch (err) {
-          // Machine test failed (timeout, disconnect) — fall through to server-side test
-          logger.warn({ err, machineId, adapterType: type }, "machine adapter test failed, falling back to server-side");
+          logger.warn({ err, machineId, adapterType: type }, "machine adapter test failed");
+          res.json({
+            adapterType: type,
+            status: "fail",
+            checks: [
+              { code: "machine_test_failed", level: "error", message: `Adapter test failed on machine. Ensure the CLI is installed and responsive.` },
+            ],
+            testedAt: new Date().toISOString(),
+          });
+          return;
         }
       }
 
-      // Fallback: run test locally on server (works for non-local adapters or when no machine connected)
+      if (!machineId) {
+        res.json({
+          adapterType: type,
+          status: "fail",
+          checks: [
+            { code: "no_machine", level: "error", message: "No machine connected. Connect a machine first to run adapter tests." },
+          ],
+          testedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Server-side adapter test — should never be reached for machine-dispatched adapters
       const adapter = requireServerAdapter(type);
 
       const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(

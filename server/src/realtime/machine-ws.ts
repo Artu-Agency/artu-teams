@@ -560,7 +560,7 @@ export function sendAdapterTest(
     const timer = setTimeout(() => {
       pendingAdapterTests.delete(key);
       reject(new Error(`Adapter test timed out for ${adapterType} on machine ${machineId}`));
-    }, 45_000);
+    }, 90_000);
 
     pendingAdapterTests.set(key, { resolve, reject, timer });
 
