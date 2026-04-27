@@ -102,12 +102,11 @@ export function Layout() {
 
   useEffect(() => {
     if (companiesLoading || onboardingTriggered.current) return;
-    if (health?.deploymentMode === "authenticated") return;
     if (companies.length === 0) {
       onboardingTriggered.current = true;
-      openOnboarding();
+      navigate("/onboarding", { replace: true });
     }
-  }, [companies, companiesLoading, openOnboarding, health?.deploymentMode]);
+  }, [companies, companiesLoading, navigate]);
 
   useEffect(() => {
     if (!companyPrefix || companiesLoading || companies.length === 0) return;
