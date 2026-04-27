@@ -5382,6 +5382,68 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           await finalizeIssueCommentPolicy(livenessRun, agent).catch(() => undefined);
           await releaseIssueExecutionAndPromote(livenessRun);
 
+          // Parse token usage and cost from Claude stream-json stdout
+          try {
+            if (event.stdout) {
+              let parsedModel = "";
+              let parsedUsage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null = null;
+              let parsedCostUsd: number | null = null;
+              let parsedSessionId: string | null = null;
+
+              for (const rawLine of event.stdout.split(/\r?\n/)) {
+                const trimmed = rawLine.trim();
+                if (!trimmed) continue;
+                let parsed: Record<string, unknown>;
+                try { parsed = JSON.parse(trimmed); } catch { continue; }
+
+                if (parsed.type === "system" && parsed.subtype === "init") {
+                  parsedModel = typeof parsed.model === "string" ? parsed.model : parsedModel;
+                  parsedSessionId = typeof parsed.session_id === "string" ? parsed.session_id : parsedSessionId;
+                }
+                if (parsed.type === "result") {
+                  const u = typeof parsed.usage === "object" && parsed.usage !== null ? parsed.usage as Record<string, unknown> : null;
+                  if (u) {
+                    parsedUsage = {
+                      inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : 0,
+                      cachedInputTokens: typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : 0,
+                      outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
+                    };
+                  }
+                  parsedCostUsd = typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : null;
+                  parsedModel = typeof parsed.model === "string" ? parsed.model : parsedModel;
+                }
+              }
+
+              if (parsedUsage || parsedCostUsd) {
+                await updateRuntimeState(agent, livenessRun, {
+                  exitCode: exitCode,
+                  signal: null,
+                  timedOut: false,
+                  errorMessage: errorMessage,
+                  usage: parsedUsage ?? undefined,
+                  costUsd: parsedCostUsd,
+                  model: parsedModel || agent.adapterType,
+                  provider: "anthropic",
+                  biller: "anthropic",
+                  billingType: "subscription",
+                  sessionId: parsedSessionId,
+                }, {
+                  legacySessionId: parsedSessionId,
+                });
+                logger.info({
+                  runId: run.id,
+                  inputTokens: parsedUsage?.inputTokens,
+                  outputTokens: parsedUsage?.outputTokens,
+                  cachedInputTokens: parsedUsage?.cachedInputTokens,
+                  costUsd: parsedCostUsd,
+                  model: parsedModel,
+                }, "machine task token usage recorded");
+              }
+            }
+          } catch (usageErr) {
+            logger.warn({ err: usageErr, runId: run.id }, "failed to parse machine task token usage");
+          }
+
           await finalizeAgentStatus(agent.id, status === "succeeded" ? "succeeded" : "failed");
           void startNextQueuedRunForAgent(agent.id);
         } catch (resultErr) {
