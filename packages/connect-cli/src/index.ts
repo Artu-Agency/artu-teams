@@ -203,7 +203,7 @@ async function legacyTokenConnect(server: string, token: string, name?: string) 
   const machineName = name ?? osHostname();
 
   console.log(`\n  Artu Teams — Machine Connect (Legacy)`);
-  console.log(`  Server: ${serverBase}`);
+
   console.log(`  Machine: ${machineName} (${platform()} ${osArch()})\n`);
 
   console.log("  [1/2] Redeeming invite token...");
@@ -310,20 +310,39 @@ function connectWebSocket(
         // Resolve command
         const command = resolveCommand(adapterType, adapterConfig);
 
-        // Build args
-        const args: string[] = ["--print", "-", "--output-format", "stream-json", "--verbose"];
+        // Build args — isolated from user's personal hooks/plugins/MCP servers
+        const args: string[] = [
+          "--print", "-",
+          "--output-format", "stream-json",
+          "--verbose",
+          "--no-session-persistence",
+        ];
         const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
         if (model) args.push("--model", model);
         if (adapterConfig.dangerouslySkipPermissions !== false) args.push("--dangerously-skip-permissions");
         const maxTurns = typeof adapterConfig.maxTurnsPerRun === "number" ? adapterConfig.maxTurnsPerRun : 0;
         if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
 
+        // Use agent's instructions root as cwd if available
+        const taskCwd = typeof adapterConfig.instructionsRootPath === "string" && adapterConfig.instructionsRootPath.trim()
+          ? adapterConfig.instructionsRootPath.trim()
+          : process.cwd();
+
         console.log(`  Task ${runId}: spawning ${command} ${args.join(" ").substring(0, 80)}...`);
+        console.log(`  Task ${runId}: cwd=${taskCwd}`);
+
+        // Clean env: remove MCP/plugin vars that cause the agent to load user's personal tools
+        const cleanEnv = { ...process.env };
+        for (const key of Object.keys(cleanEnv)) {
+          if (key.startsWith("MCP_") || key.startsWith("CLAUDE_PLUGIN")) {
+            delete cleanEnv[key];
+          }
+        }
 
         // Spawn process
         const child = execFile(command, args, {
-          cwd: process.cwd(),
-          env: process.env,
+          cwd: taskCwd,
+          env: cleanEnv,
           timeout: timeoutSec * 1000,
           maxBuffer: 10 * 1024 * 1024, // 10MB
         }, (err, stdout, stderr) => {
@@ -467,7 +486,6 @@ async function main() {
   const serverBase = (args.server ?? config?.server ?? "https://teams.artu.ar/api").replace(/\/+$/, "");
 
   console.log(`\n  Artu Teams — Machine Connect`);
-  console.log(`  Server: ${serverBase}\n`);
 
   // Check if existing config is valid
   if (config) {
