@@ -330,10 +330,19 @@ function connectWebSocket(
         const maxTurns = typeof adapterConfig.maxTurnsPerRun === "number" ? adapterConfig.maxTurnsPerRun : 0;
         if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
 
-        // Use agent's instructions root as cwd if available
-        const taskCwd = typeof adapterConfig.instructionsRootPath === "string" && adapterConfig.instructionsRootPath.trim()
-          ? adapterConfig.instructionsRootPath.trim()
-          : process.cwd();
+        // Use agent's instructions root as cwd if it exists locally, otherwise fall back to process.cwd()
+        let taskCwd = process.cwd();
+        if (typeof adapterConfig.instructionsRootPath === "string" && adapterConfig.instructionsRootPath.trim()) {
+          const candidateCwd = adapterConfig.instructionsRootPath.trim();
+          try {
+            const fs = require("node:fs");
+            if (fs.statSync(candidateCwd).isDirectory()) {
+              taskCwd = candidateCwd;
+            }
+          } catch {
+            // Path doesn't exist locally (e.g. EC2 server path) — use process.cwd()
+          }
+        }
 
         console.log(`  Task ${runId}: spawning ${command} ${args.join(" ").substring(0, 80)}...`);
         console.log(`  Task ${runId}: cwd=${taskCwd}`);
