@@ -83,8 +83,9 @@ export function createDb(url: string) {
   const dbSchema = getSchemaFromUrl(url);
   const txMode = isTransactionPooler(url);
   const sql = postgres(url, {
-    max: 5,
+    max: 10,
     idle_timeout: 20,
+    connect_timeout: 10,
     ...(txMode ? { prepare: false } : {}),
     ...(dbSchema !== 'public' ? {
       connection: { search_path: dbSchema },

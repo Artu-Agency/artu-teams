@@ -63,7 +63,10 @@ export function healthRoutes(
     }
 
     try {
-      await db.execute(sql`SELECT 1`);
+      await Promise.race([
+        db.execute(sql`SELECT 1`),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("health probe timeout")), 3000)),
+      ]);
     } catch (error) {
       logger.warn({ err: error }, "Health check database probe failed");
       res.status(503).json({
