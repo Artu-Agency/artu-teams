@@ -1452,7 +1452,22 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           continue;
         }
 
-        if (didAutomaticRecoveryFail(latestRun, "assignment_recovery")) {
+        // Count recent consecutive failed runs for this issue to prevent infinite retry loops.
+        // If 3+ runs failed, escalate to blocked instead of re-enqueueing.
+        const recentRuns = await db
+          .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.companyId, issue.companyId),
+              sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+              inArray(heartbeatRuns.status, ["failed", "timed_out", "cancelled"]),
+            ),
+          )
+          .orderBy(sql`${heartbeatRuns.createdAt} desc`)
+          .limit(3);
+
+        if (recentRuns.length >= 3 || didAutomaticRecoveryFail(latestRun, "assignment_recovery")) {
           const failureSummary = summarizeRunFailureForIssueComment(latestRun);
           const updated = await escalateStrandedAssignedIssue({
             issue,
