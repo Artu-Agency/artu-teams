@@ -1414,7 +1414,7 @@ export function OnboardingWizard() {
                       size="sm"
                       disabled={
                         !agentName.trim() || loading || adapterEnvLoading ||
-                        (isLocalAdapter && adapterEnvResult?.status !== "pass")
+                        (isLocalAdapter && adapterEnvResult?.status !== "pass" && adapterEnvResult?.status !== "warn")
                       }
                       onClick={handleStep3Next}
                     >
