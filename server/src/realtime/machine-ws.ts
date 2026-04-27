@@ -531,6 +531,13 @@ export function setupMachineWebSocket(server: HttpServer, db: Db) {
 
   logger.info("Machine WebSocket server attached on /ws/machines");
 
+  // On startup, mark all machines as offline (no WS connections survive a restart)
+  void db
+    .update(machines)
+    .set({ status: "offline" })
+    .then(() => logger.info("marked all machines offline on startup"))
+    .catch((err) => logger.error({ err }, "failed to mark machines offline on startup"));
+
   return wss;
 }
 

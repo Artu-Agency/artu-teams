@@ -1,4 +1,4 @@
-import { hostname as osHostname, platform, arch as osArch } from "node:os";
+import { hostname as osHostname, platform, arch as osArch, cpus, totalmem, freemem } from "node:os";
 import { execFile } from "node:child_process";
 import WebSocket from "ws";
 import { post, get, authHeaders } from "./http.js";
@@ -260,10 +260,17 @@ function connectWebSocket(
 
     const heartbeatInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
+        // Calculate CPU usage from os.cpus() idle vs total
+        const cpuInfo = cpus();
+        const totalIdle = cpuInfo.reduce((sum, c) => sum + c.times.idle, 0);
+        const totalTick = cpuInfo.reduce((sum, c) => sum + c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq, 0);
+        const cpuUsage = cpuInfo.length > 0 ? Math.round((1 - totalIdle / totalTick) * 100) : 0;
+        const memUsage = Math.round((1 - freemem() / totalmem()) * 100);
+
         ws.send(JSON.stringify({
           type: "heartbeat",
-          cpu: 0,
-          memory: 0,
+          cpu: cpuUsage,
+          memory: memUsage,
           adapters: [],
           activeTasks: activeTasks.size,
           activeTaskIds: Array.from(activeTasks.keys()),
