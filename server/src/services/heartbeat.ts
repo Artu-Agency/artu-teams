@@ -4446,6 +4446,34 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       return;
     }
 
+    // -----------------------------------------------------------------------
+    // Early machine availability check: avoid expensive setup work when no
+    // machine is connected.  findConnectedMachineForCompany is an in-memory
+    // lookup (no DB hit), so this is essentially free.
+    // -----------------------------------------------------------------------
+    {
+      const { findConnectedMachineForCompany: earlyMachineCheck } =
+        await import("../realtime/machine-ws.js");
+      if (!earlyMachineCheck(agent.companyId)) {
+        const noMachineError =
+          "No machine connected. Connect one with: npx artu-teams connect";
+        await setRunStatus(run.id, "failed", {
+          finishedAt: new Date(),
+          error: noMachineError,
+          errorCode: "no_machine",
+        });
+        await setWakeupStatus(run.wakeupRequestId, "failed", {
+          finishedAt: new Date(),
+          error: "No machine connected",
+        });
+        await finalizeAgentStatus(agent.id, "failed");
+        const failedRun = await getRun(runId);
+        if (failedRun) await releaseIssueExecutionAndPromote(failedRun);
+        activeRunExecutions.delete(run.id);
+        return;
+      }
+    }
+
     const runtime = await ensureRuntimeState(agent);
     const context = parseObject(run.contextSnapshot);
     const taskKey = deriveTaskKeyWithHeartbeatFallback(context, null);
@@ -5246,7 +5274,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         // No machine available — fail the run with clear error
         await setRunStatus(run.id, "failed", {
           finishedAt: new Date(),
-          error: "No machine connected. Connect one with: npx artu-teams connect --server <url> --token <token>",
+          error: "No machine connected. Connect one with: npx artu-teams connect",
           errorCode: "no_machine",
         });
         await setWakeupStatus(run.wakeupRequestId, "failed", {
