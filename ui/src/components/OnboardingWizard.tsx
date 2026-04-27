@@ -480,8 +480,7 @@ export function OnboardingWizard() {
     }
   }, [onboardingMachines, step, machineInitialCount, connectedMachine]);
 
-  const machineServerUrl = API_BASE.startsWith("http") ? API_BASE : `${window.location.origin}${API_BASE}`;
-  const machineCliCommand = `npx artu-teams connect --server ${machineServerUrl} --token ${machineInviteToken ?? "<token>"}`;
+  const machineCliCommand = "npx artu-teams connect";
 
   async function handleMachineCopy() {
     try {
@@ -865,7 +864,7 @@ export function OnboardingWizard() {
                         </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Link expires in 24 hours.
+                        A browser window will open for authentication. No token required.
                       </p>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
                         <Loader2 className="h-4 w-4 animate-spin" />
