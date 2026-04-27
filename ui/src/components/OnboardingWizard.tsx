@@ -467,16 +467,21 @@ export function OnboardingWizard() {
     enabled: !!createdCompanyId && step === 2 && !!machineInviteToken,
   });
 
-  // Detect new machine connection
+  // Detect machine connection (new or reconnected)
   useEffect(() => {
     if (!onboardingMachines || step !== 2) return;
     if (machineInitialCount === null) {
       setMachineInitialCount(onboardingMachines.length);
-      return;
     }
-    if (onboardingMachines.length > machineInitialCount && !connectedMachine) {
-      const newest = onboardingMachines[onboardingMachines.length - 1];
-      setConnectedMachine(newest);
+    if (!connectedMachine) {
+      // Detect by new count OR any online machine
+      const online = onboardingMachines.find((m: Machine) => m.status === "online");
+      if (online) {
+        setConnectedMachine(online);
+      } else if (machineInitialCount !== null && onboardingMachines.length > machineInitialCount) {
+        const newest = onboardingMachines[onboardingMachines.length - 1];
+        setConnectedMachine(newest);
+      }
     }
   }, [onboardingMachines, step, machineInitialCount, connectedMachine]);
 
