@@ -465,6 +465,7 @@ export function OnboardingWizard() {
     queryKey: queryKeys.machines.list(createdCompanyId!),
     queryFn: () => machinesApi.list(createdCompanyId!),
     enabled: !!createdCompanyId && step === 2 && !!machineInviteToken,
+    refetchInterval: !connectedMachine ? 3000 : false,
   });
 
   // Detect machine connection (new or reconnected)
