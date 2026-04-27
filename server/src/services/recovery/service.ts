@@ -1346,33 +1346,14 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     latestRun: LatestIssueRun;
     comment: string;
   }) {
-    const recoveryIssue = await ensureStrandedIssueRecoveryIssue({
-      issue: input.issue,
-      previousStatus: input.previousStatus,
-      latestRun: input.latestRun,
-    });
-    const blockerIds = await existingUnresolvedBlockerIssueIds(input.issue.companyId, input.issue.id);
-    const nextBlockerIds = recoveryIssue
-      ? [...new Set([...blockerIds, recoveryIssue.id])]
-      : blockerIds;
+    // Do NOT create recovery sub-issues — they clutter the dashboard and create cascading loops.
+    // Just mark the issue as blocked with a comment explaining what happened.
     const updated = await issuesSvc.update(input.issue.id, {
       status: "blocked",
-      blockedByIssueIds: nextBlockerIds,
     });
     if (!updated) return null;
 
-    const prefix = await getCompanyIssuePrefix(input.issue.companyId);
-    const recoveryLine = recoveryIssue
-      ? [
-        "",
-        `- Recovery issue: ${issueUiLink({ identifier: recoveryIssue.identifier, id: recoveryIssue.id }, prefix)}`,
-        "- Next action: the recovery owner should either restore a live execution path or record the manual resolution, then mark the recovery issue done.",
-      ].join("\n")
-      : [
-        "",
-        "- Recovery issue: none created because Artu Teams could not find an invokable manager, creator, or executive owner with budget available.",
-        "- Next action: a board operator should assign an invokable recovery owner, fix the agent/runtime state, or record an intentional manual resolution.",
-      ].join("\n");
+    const recoveryLine = "\n- Next action: a board operator should check the machine connection, fix the issue, and move it back to `todo` to retry.";
 
     await issuesSvc.addComment(input.issue.id, `${input.comment}${recoveryLine}`, {});
 

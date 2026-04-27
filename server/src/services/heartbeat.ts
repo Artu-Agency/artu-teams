@@ -4455,20 +4455,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       const { findConnectedMachineForCompany: earlyMachineCheck } =
         await import("../realtime/machine-ws.js");
       if (!earlyMachineCheck(agent.companyId)) {
-        const noMachineError =
-          "No machine connected. Connect one with: npx artu-teams connect";
-        await setRunStatus(run.id, "failed", {
-          finishedAt: new Date(),
-          error: noMachineError,
-          errorCode: "no_machine",
-        });
-        await setWakeupStatus(run.wakeupRequestId, "failed", {
-          finishedAt: new Date(),
-          error: "No machine connected",
-        });
-        await finalizeAgentStatus(agent.id, "failed");
-        const failedRun = await getRun(runId);
-        if (failedRun) await releaseIssueExecutionAndPromote(failedRun);
+        // No machine available — keep run queued instead of failing it.
+        // This prevents the recovery loop from creating infinite failed runs.
+        // The run will be picked up when a machine connects and heartbeat re-processes queued runs.
+        logger.info({ runId: run.id, agentId: agent.id }, "no machine connected — keeping run queued");
+        await finalizeAgentStatus(agent.id, "idle");
         activeRunExecutions.delete(run.id);
         return;
       }
